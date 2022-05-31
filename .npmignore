@@ -1,0 +1,10 @@
+## All non-dist directories
+.github/
+src/
+test/
+
+## Root files
+.eslintrc.json
+.gitignore
+.c8rc.json
+webpack.config.js
