@@ -34,7 +34,7 @@
     "sort": true,
     "meta": {
       "title": "htj2k-js",
-      "description": "Javascript HTJ2K Decoder for Node.js and Browser",
+      "description": "Javascript High-Throughput JPEG 2000 (HTJ2K) decoder for Node.js and browser",
       "keyword": "HTJ2K, JPEG2000"
     },
     "search": true,

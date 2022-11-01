@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>htj2k-js rendering example</title>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="user-scalable=no, width=device-width, initial-scale=1, maximum-scale=1"
+    />
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        display: table;
+      }
+      .container {
+        display: table-cell;
+        text-align: center;
+        vertical-align: middle;
+      }
+      .content {
+        display: inline-block;
+        text-align: center;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="dropZone" class="container">
+      <div class="content">
+        <p id="infoText">
+          <a id="openLink" href="">Open</a> or drag and drop an HTJ2K file to render it!<br />Nothing
+          gets uploaded anywhere.
+        </p>
+        <canvas id="renderingCanvas"></canvas>
+      </div>
+    </div>
+  </body>
+  <script type="text/javascript" src="htj2k-js.min.js"></script>
+  <script>
+    const { Decoder } = window.htj2kJs;
+
+    function renderFile(file) {
+      const reader = new FileReader();
+      reader.onload = (file) => {
+        const arrayBuffer = reader.result;
+        const canvasElement = document.getElementById('renderingCanvas');
+        const infoTextElement = document.getElementById('infoText');
+        infoTextElement.innerText = '';
+
+        const t0 = performance.now();
+
+        const htj2kd = new Decoder(arrayBuffer, { logSegmentMarkers: true, logBoxes: true });
+        const header = htj2kd.readHeader();
+
+        const t1 = performance.now();
+        console.log(`Header parsing time: ${t1 - t0} ms`);
+
+        const renderingResult = render({
+          header,
+          htj2kd,
+          canvasElement,
+          infoTextElement,
+        });
+      };
+      reader.readAsArrayBuffer(file);
+    }
+
+    function render(opts) {
+      opts.canvasElement.width = opts.header.width;
+      opts.canvasElement.height = opts.header.height;
+
+      try {
+        const t0 = performance.now();
+
+        const decodingResult = opts.htj2kd.decode();
+        const renderedPixels = new Uint8Array(decodingResult.pixels);
+
+        const t1 = performance.now();
+
+        const ctx = opts.canvasElement.getContext('2d');
+        tx.clearRect(0, 0, opts.canvasElement.width, opts.canvasElement.height);
+        const imageData = ctx.createImageData(opts.header.width, opts.header.height);
+        const canvasPixels = imageData.data;
+        for (let i = 0; i < 4 * opts.header.width * opts.header.height; i++) {
+          canvasPixels[i] = renderedPixels[i];
+        }
+        ctx.putImageData(imageData, 0, 0);
+
+        const t2 = performance.now();
+
+        opts.infoTextElement.innerHTML = '';
+        console.log(`Decoding time: ${t1 - t0} ms`);
+        console.log(`Drawing time: ${t2 - t1} ms`);
+      } catch (err) {
+        opts.infoTextElement.innerText = 'Error: ' + err.message;
+        throw err;
+      }
+    }
+
+    const dropZone = document.getElementById('dropZone');
+    dropZone.ondragover = (event) => {
+      event.stopPropagation();
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'copy';
+    };
+    dropZone.ondrop = (event) => {
+      event.stopPropagation();
+      event.preventDefault();
+      const files = event.dataTransfer.files;
+      renderFile(files[0]);
+    };
+
+    const openLink = document.getElementById('openLink');
+    openLink.onclick = () => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.onchange = (event) => {
+        const files = event.target.files;
+        renderFile(files[0]);
+      };
+      input.click();
+      return false;
+    };
+  </script>
+</html>

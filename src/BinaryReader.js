@@ -26,9 +26,9 @@ class BinaryReader {
   }
 
   /**
-   * Reads an integer value.
+   * Reads a signed integer value.
    * @method
-   * @returns {number} The integer value.
+   * @returns {number} The signed integer value.
    */
   readInt32() {
     const val = this.view.getInt32(this.offset, this.isLittleEndian);
@@ -50,9 +50,9 @@ class BinaryReader {
   }
 
   /**
-   * Reads a short value.
+   * Reads a signed short value.
    * @method
-   * @returns {number} The short value.
+   * @returns {number} The signed short value.
    */
   readInt16() {
     const val = this.view.getInt16(this.offset, this.isLittleEndian);
@@ -74,28 +74,10 @@ class BinaryReader {
   }
 
   /**
-   * Reads an unsigned short value array.
-   * @method
-   * @param {number} length - Reading length.
-   * @returns {number} The unsigned short value array.
-   */
-  readUint16Array(length) {
-    const sixlen = Math.trunc(length / 2);
-    const arr = new Uint16Array(sixlen);
-    let i = 0;
-    while (i++ < sixlen) {
-      arr[i] = this.view.getUint16(this.offset, this.isLittleEndian);
-      this._increment(2);
-    }
-
-    return arr;
-  }
-
-  /**
    * Reads a byte value array.
    * @method
    * @param {number} length - Reading length.
-   * @returns {number} The byte value array.
+   * @returns {Uint8Array} The byte value array.
    */
   readUint8Array(length) {
     const arr = new Uint8Array(this.buffer, this.offset, length);
@@ -123,20 +105,48 @@ class BinaryReader {
   }
 
   /**
+   * Gets the buffer byte length.
+   * @method
+   * @returns {number} The buffer byte length.
+   */
+  length() {
+    return this.buffer.byteLength;
+  }
+
+  /**
+   * Gets the read offset.
+   * @method
+   * @returns {number} The read offset.
+   */
+  position() {
+    return this.offset;
+  }
+
+  /**
+   * Sets the read offset to given position.
+   * Clamps between zero and buffer length.
+   * @method
+   * @param {number} pos - Position.
+   */
+  seek(pos) {
+    this.offset = Math.max(0, Math.min(this.length(), pos));
+  }
+
+  /**
    * Resets the reading offset.
    * @method
    */
   reset() {
-    this.offset = 0;
+    this.seek(0);
   }
 
   /**
-   * Checks if the reading offset is beyond the buffer boundaries.
+   * Checks if the reading offset is at or beyond the buffer boundaries.
    * @method
    * @returns {boolean} Flag to indicate if the reading offset
    * is beyond the buffer boundaries.
    */
-  end() {
+  isAtEnd() {
     return this.offset >= this.buffer.byteLength;
   }
 
@@ -145,7 +155,7 @@ class BinaryReader {
    * @method
    */
   toEnd() {
-    this.offset = this.buffer.byteLength;
+    this.seek(this.buffer.byteLength);
   }
 
   //#region Private Methods

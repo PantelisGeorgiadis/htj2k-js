@@ -1,10 +1,16 @@
 ## All non-dist directories
 .github/
+coverage/
+examples/
 src/
 test/
+documentation/
 
 ## Root files
 .eslintrc.json
 .gitignore
+.jsdocrc.json
 .c8rc.json
+index.test-d.ts
+karma.config.js
 webpack.config.js

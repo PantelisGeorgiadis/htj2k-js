@@ -10,8 +10,7 @@ class Decoder {
    * @param {ArrayBuffer} buffer - Data buffer.
    * @param {Object} [opts] - Decoder options.
    * @param {boolean} [opts.logBoxes] - Flag to indicate whether to log boxes.
-   * @param {boolean} [opts.logSegmentMarkers] - Flag to indicate whether
-   * to log segment markers.
+   * @param {boolean} [opts.logSegmentMarkers] - Flag to indicate whether to log segment markers.
    */
   constructor(buffer, opts) {
     this.decoderOpts = opts || {};
@@ -31,11 +30,12 @@ class Decoder {
    * @returns {number} header.components components.
    * @returns {boolean} header.decompositionLevels decompositionLevels.
    * @returns {string} header.progressionOrder progressionOrder.
+   * @throws Error if buffer does not contain an HTJ2K codestream.
    */
   readHeader() {
     const format = this._determineJ2kFormat(this.buffer);
     if (format === J2kFormat.Unknown) {
-      throw Error('Buffer does not contain an HTJ2K codestream (raw or within a box)');
+      throw new Error('Buffer does not contain an HTJ2K codestream (raw or within a box)');
     }
 
     let codestreamBuffer = this.buffer;
@@ -45,7 +45,7 @@ class Decoder {
       const boxes = boxReader.getBoxes();
       const firstCodestreamBox = boxes.find((b) => b.getType() === BoxType.CodestreamBox);
       if (!firstCodestreamBox) {
-        throw Error('');
+        throw new Error('Buffer does not contain an HTJ2K codestream within a box');
       }
       codestreamBuffer = firstCodestreamBox.getBuffer();
     }
@@ -61,7 +61,7 @@ class Decoder {
    */
   decode(opts) {
     if (!this.codestream) {
-      throw Error('');
+      this.readHeader();
     }
 
     this.codestream.decode(opts);

@@ -1,3 +1,4 @@
+const BinaryReader = require('./BinaryReader');
 const {
   Marker,
   CodingStyle,
@@ -6,8 +7,6 @@ const {
   WaveletTransform,
 } = require('./Constants');
 const { MathFunction, Point, Size } = require('./Helpers');
-
-const DataStream = require('datastream.js');
 
 //#region Segment
 class Segment {
@@ -63,6 +62,7 @@ class Segment {
   /**
    * Parses the segment.
    * @method
+   * @throws Error if parse is not implemented.
    */
   parse() {
     throw new Error('parse should be implemented');
@@ -76,7 +76,9 @@ class Segment {
   toString() {
     return `Segment [Marker: ${this._markerFromValue(
       this.getMarker()
-    )}, Position: ${this.getPosition()}, Length: ${this.getLength()}]`;
+    )}, Position: ${this.getPosition()} (0x${this.getPosition().toString(
+      16
+    )}), Length: ${this.getLength()}]`;
   }
 
   //#region Private Methods
@@ -175,6 +177,7 @@ class SizSegment extends Segment {
    * @method
    * @param {number} component - Component.
    * @returns {number} The bit depth.
+   * @throws Error if requested component is out of range.
    */
   getBitDepth(component) {
     if (component > this.getComponents()) {
@@ -189,6 +192,7 @@ class SizSegment extends Segment {
    * @method
    * @param {number} component - Component.
    * @returns {number} The signedness.
+   * @throws Error if requested component is out of range.
    */
   isSigned(component) {
     if (component > this.getComponents()) {
@@ -203,6 +207,7 @@ class SizSegment extends Segment {
    * @method
    * @param {number} component - Component.
    * @returns {number} The sub-sampling X.
+   * @throws Error if requested component is out of range.
    */
   getSubSamplingX(component) {
     if (component > this.getComponents()) {
@@ -217,6 +222,7 @@ class SizSegment extends Segment {
    * @method
    * @param {number} component - Component.
    * @returns {number} The sub-sampling Y.
+   * @throws Error if requested component is out of range.
    */
   getSubSamplingY(component) {
     if (component > this.getComponents()) {
@@ -231,6 +237,7 @@ class SizSegment extends Segment {
    * @method
    * @param {number} component - Component.
    * @returns {number} The width.
+   * @throws Error if requested component is out of range.
    */
   getWidth(component) {
     if (component > this.getComponents()) {
@@ -264,6 +271,7 @@ class SizSegment extends Segment {
    * @method
    * @param {number} component - Component.
    * @returns {number} The height.
+   * @throws Error if requested component is out of range.
    */
   getHeight(component) {
     if (component > this.getComponents()) {
@@ -282,56 +290,55 @@ class SizSegment extends Segment {
    * @method
    */
   parse() {
-    const dataStream = new DataStream(this.getBuffer());
-    dataStream.endianness = DataStream.BIG_ENDIAN;
+    const binaryReader = new BinaryReader(this.getBuffer(), false);
 
-    this.profile = dataStream.readUint16();
+    this.profile = binaryReader.readUint16();
     if ((this.profile & 0x4000) === 0) {
-      throw Error('Profile bit 14 not set (this is not an HTJ2K codestream)');
+      throw new Error('Profile bit 14 not set (this is not an HTJ2K codestream)');
     }
 
-    this.refGridSize.setWidth(dataStream.readUint32());
-    this.refGridSize.setHeight(dataStream.readUint32());
+    this.refGridSize.setWidth(binaryReader.readUint32());
+    this.refGridSize.setHeight(binaryReader.readUint32());
     if (this.refGridSize.getWidth() === 0 || this.refGridSize.getHeight() === 0) {
-      throw Error('Reference grid width and height must be above zero');
+      throw new Error('Reference grid width and height must be above zero');
     }
 
-    this.imageOffset.setX(dataStream.readUint32());
-    this.imageOffset.setY(dataStream.readUint32());
+    this.imageOffset.setX(binaryReader.readUint32());
+    this.imageOffset.setY(binaryReader.readUint32());
     if (this.imageOffset.getX() === 0xffffffff || this.imageOffset.getY() === 0xffffffff) {
-      throw Error('Image offset must be below the maximal value for the reference grid');
+      throw new Error('Image offset must be below the maximal value for the reference grid');
     }
 
-    this.tileSize.setWidth(dataStream.readUint32());
-    this.tileSize.setHeight(dataStream.readUint32());
+    this.tileSize.setWidth(binaryReader.readUint32());
+    this.tileSize.setHeight(binaryReader.readUint32());
     if (this.tileSize.getWidth() === 0 || this.tileSize.getHeight() === 0) {
-      throw Error('Reference tile width and height must be above zero');
+      throw new Error('Reference tile width and height must be above zero');
     }
 
-    this.tileOffset.setX(dataStream.readUint32());
-    this.tileOffset.setY(dataStream.readUint32());
+    this.tileOffset.setX(binaryReader.readUint32());
+    this.tileOffset.setY(binaryReader.readUint32());
     if (this.tileOffset.getX() === 0xffffffff || this.tileOffset.getY() === 0xffffffff) {
-      throw Error('Tile offset must be below the maximal value for the tile size');
+      throw new Error('Tile offset must be below the maximal value for the tile size');
     }
 
-    this.components = dataStream.readUint16();
+    this.components = binaryReader.readUint16();
     if (this.components === 0 || this.components > 1 << 14) {
-      throw Error(`Component count out of valid range [${this.components}]`);
+      throw new Error(`Component count out of valid range [${this.components}]`);
     }
     const sizSegmentLength = 38 + this.components * 3;
     if (this.getLength() !== sizSegmentLength) {
-      throw Error(
+      throw new Error(
         `Component count and length of SIZ segment do not agree [Length: ${this.getLength()}, Component count: ${sizSegmentLength}]`
       );
     }
 
     for (let c = 0; c < this.components; c++) {
-      this.precisions.push(dataStream.readUint8());
-      this.subSamplingX.push(dataStream.readUint8());
-      this.subSamplingY.push(dataStream.readUint8());
+      this.precisions.push(binaryReader.readUint8());
+      this.subSamplingX.push(binaryReader.readUint8());
+      this.subSamplingY.push(binaryReader.readUint8());
 
       if (this.subSamplingX[c] === 0 || this.subSamplingY[c] === 0) {
-        throw Error('Sub-sampling must be strictly positive');
+        throw new Error('Sub-sampling must be strictly positive');
       }
     }
   }
@@ -379,22 +386,25 @@ class CapSegment extends Segment {
    * @method
    */
   parse() {
-    const dataStream = new DataStream(this.getBuffer());
-    dataStream.endianness = DataStream.BIG_ENDIAN;
+    const binaryReader = new BinaryReader(this.getBuffer(), false);
 
-    this.capabilities = dataStream.readUint32();
+    this.capabilities = binaryReader.readUint32();
     if (this.capabilities & 0xfffdffff) {
-      throw Error('CAP segment has options that are not supported');
+      throw new Error('CAP segment has options that are not supported');
     }
     if ((this.capabilities & 0x00020000) === 0) {
-      throw Error('Capabilities should have its 15th MSB set (this is not an HTJ2K codestream)');
+      throw new Error(
+        'Capabilities should have its 15th MSB set (this is not an HTJ2K codestream)'
+      );
     }
 
     const count = this._populationCount(this.capabilities);
     if (this.getLength() !== 6 + 2 * count) {
-      `Capabilities count and length of CAP segment do not agree [Length: ${this.getLength()}, Component count: ${
-        6 + 2 * count
-      }]`;
+      throw new Error(
+        `Capabilities count and length of CAP segment do not agree [Length: ${this.getLength()}, Component count: ${
+          6 + 2 * count
+        }]`
+      );
     }
   }
 
@@ -559,61 +569,60 @@ class CodSegment extends Segment {
    * @method
    */
   parse() {
-    const dataStream = new DataStream(this.getBuffer());
-    dataStream.endianness = DataStream.BIG_ENDIAN;
+    const binaryReader = new BinaryReader(this.getBuffer(), false);
 
-    this.codingStyle = dataStream.readUint8();
+    this.codingStyle = binaryReader.readUint8();
     if (
       this.codingStyle >
       (CodingStyle.UseEphMarker | CodingStyle.UseSopMarker | CodingStyle.UsePrecincts)
     ) {
-      throw Error('Invalid coding style');
+      throw new Error('Invalid coding style');
     }
 
-    this.progressionOrder = dataStream.readUint8();
+    this.progressionOrder = binaryReader.readUint8();
 
-    this.qualityLayers = dataStream.readUint16();
+    this.qualityLayers = binaryReader.readUint16();
     if (this.qualityLayers === 0) {
-      throw Error('Quality layers must be positive');
+      throw new Error('Quality layers must be positive');
     }
 
-    this.multipleComponentTransform = dataStream.readUint8();
+    this.multipleComponentTransform = binaryReader.readUint8();
     if (this.multipleComponentTransform > 1) {
-      throw Error('Multiple component transform must be 0 or 1');
+      throw new Error('Multiple component transform must be 0 or 1');
     }
 
-    this.decompositionLevels = dataStream.readUint8();
+    this.decompositionLevels = binaryReader.readUint8();
     if (this.decompositionLevels > 32) {
-      throw Error('Decomposition levels must be 32 or less');
+      throw new Error('Decomposition levels must be 32 or less');
     }
 
-    this.codeblockExpnX = dataStream.readUint8();
-    this.codeblockExpnY = dataStream.readUint8();
+    this.codeblockExpnX = binaryReader.readUint8();
+    this.codeblockExpnY = binaryReader.readUint8();
     if (
       this.codeblockExpnX > 1 << 4 ||
       this.codeblockExpnY > 1 << 4 ||
       this.codeblockExpnX + this.codeblockExpnY > 8
     ) {
-      throw Error(
+      throw new Error(
         'Codeblock width and height must be at most 1K samples ' +
           ' the area of the codeblock should be at most 4K samples'
       );
     }
 
-    this.codeblockStyle = dataStream.readUint8();
-    this.waveletFilter = dataStream.readUint8();
+    this.codeblockStyle = binaryReader.readUint8();
+    this.waveletFilter = binaryReader.readUint8();
 
     const usePrecincts = (this.codingStyle & CodingStyle.UsePrecincts) !== 0;
     if (usePrecincts) {
       const expectedCodSize = 12 + this.decompositionLevels + 1;
       if (this.getLength() != expectedCodSize) {
-        throw Error('Size mismatch in COD marker segment for precinct specs');
+        throw new Error('Size mismatch in COD marker segment for precinct specs');
       }
     }
 
     for (let r = 0; r <= this.decompositionLevels; r++) {
       if (usePrecincts) {
-        const val = dataStream.readUint8();
+        const val = binaryReader.readUint8();
         this.precinctSizeX.push(val & 0xf);
         this.precinctSizeY.push((val >> 4) & 0xf);
       } else {
@@ -684,31 +693,30 @@ class QcdSegment extends Segment {
    * @method
    */
   parse() {
-    const dataStream = new DataStream(this.getBuffer());
-    dataStream.endianness = DataStream.BIG_ENDIAN;
+    const binaryReader = new BinaryReader(this.getBuffer(), false);
 
-    this.quantizationStyle = dataStream.readUint8();
+    this.quantizationStyle = binaryReader.readUint8();
     if ((this.quantizationStyle & 0x1f) === 0) {
       this.decompositionLevels = (this.getLength() - 4) / 3;
       if (this.getLength() !== 4 + 3 * this.decompositionLevels) {
-        throw Error('Invalid length value in QCD segment');
+        throw new Error('Invalid length value in QCD segment');
       }
       for (let i = 0; i < 1 + 3 * this.decompositionLevels; ++i) {
-        this.quantizationStepSize.push(dataStream.readUint8());
+        this.quantizationStepSize.push(binaryReader.readUint8());
       }
     } else if ((this.quantizationStyle & 0x1f) === 1) {
       this.decompositionLevels = 0;
-      throw Error('Scalar derived quantization is not supported yet in QCD segment');
+      throw new Error('Scalar derived quantization is not supported yet in QCD segment');
     } else if ((this.quantizationStyle & 0x1f) === 2) {
       this.decompositionLevels = (this.getLength() - 5) / 6;
       if (this.getLength() != 5 + 6 * this.decompositionLevels) {
-        throw Error('Invalid length value in QCD marker');
+        throw new Error('Invalid length value in QCD marker');
       }
       for (let i = 0; i < 1 + 3 * this.decompositionLevels; ++i) {
-        this.quantizationStepSize.push(dataStream.readUint16());
+        this.quantizationStepSize.push(binaryReader.readUint16());
       }
     } else {
-      throw Error('Invalid quantization style value in QCD segment');
+      throw new Error('Invalid quantization style value in QCD segment');
     }
   }
 
@@ -779,17 +787,25 @@ class SotSegment extends Segment {
   }
 
   /**
+   * Gets the payload length.
+   * @method
+   * @returns {number} The payload length.
+   */
+  getPayloadLength() {
+    return this.getTilePartLength() > 0 ? this.getTilePartLength() - 14 : 0;
+  }
+
+  /**
    * Parses the segment.
    * @method
    */
   parse() {
-    const dataStream = new DataStream(this.getBuffer());
-    dataStream.endianness = DataStream.BIG_ENDIAN;
+    const binaryReader = new BinaryReader(this.getBuffer(), false);
 
-    this.tileIndex = dataStream.readUint16();
-    this.tilePartLength = dataStream.readUint32();
-    this.tilePartIndex = dataStream.readUint8();
-    this.tilePartCount = dataStream.readUint8();
+    this.tileIndex = binaryReader.readUint16();
+    this.tilePartLength = binaryReader.readUint32();
+    this.tilePartIndex = binaryReader.readUint8();
+    this.tilePartCount = binaryReader.readUint8();
   }
 
   /**
@@ -841,12 +857,11 @@ class ComSegment extends Segment {
    * @method
    */
   parse() {
-    const dataStream = new DataStream(this.getBuffer());
-    dataStream.endianness = DataStream.BIG_ENDIAN;
+    const binaryReader = new BinaryReader(this.getBuffer(), false);
 
-    this.registration = dataStream.readUint16();
+    this.registration = binaryReader.readUint16();
     if (this.registration === 1 /*LATIN1_REGISTRATION*/) {
-      this.comment = dataStream.readString(this.getLength() - 4, 'ASCII' /*LATIN1_CODEPAGE*/);
+      this.comment = binaryReader.readString(this.getLength() - 4);
     }
   }
 
@@ -856,7 +871,9 @@ class ComSegment extends Segment {
    * @return {string} Segment description.
    */
   toString() {
-    return `${super.toString()} [Registration: ${this.getRegistration()}, Comment: ${this.getComment()}]`;
+    return `${super.toString()} [Registration: ${this.getRegistration()}, Comment: ${
+      this.getComment() ?? ''
+    }]`;
   }
 }
 //#endregion

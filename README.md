@@ -1,7 +1,7 @@
 [![NPM version][npm-version-image]][npm-url] [![build][build-image]][build-url] [![MIT License][license-image]][license-url] 
 
 # htj2k-js
-Javascript HTJ2K Decoder for Node.js and Browser.
+Javascript High-Throughput JPEG 2000 (HTJ2K) decoder for Node.js and browser.
 
 ### Install
 #### Node.js

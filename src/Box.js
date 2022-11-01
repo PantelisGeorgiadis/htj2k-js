@@ -1,7 +1,6 @@
+const BinaryReader = require('./BinaryReader');
 const { BoxType } = require('./Constants');
 const log = require('./log');
-
-const DataStream = require('datastream.js');
 
 //#region Box
 class Box {
@@ -57,6 +56,7 @@ class Box {
   /**
    * Parses the box.
    * @method
+   * @throws Error if parse is not implemented.
    */
   parse() {
     throw new Error('parse should be implemented');
@@ -101,8 +101,7 @@ class BoxReader {
     opts = opts || {};
     this.logBoxes = opts.logBoxes || false;
 
-    this.dataStream = new DataStream(buffer);
-    this.dataStream.endianness = DataStream.BIG_ENDIAN;
+    this.binaryReader = new BinaryReader(buffer, false);
     this.boxes = [];
   }
 
@@ -118,31 +117,33 @@ class BoxReader {
   /**
    * Reads boxes.
    * @method
+   * @throws Error if extended length boxes are found.
    */
   readBoxes() {
     let lastBoxFound = false;
     while (!lastBoxFound) {
-      const position = this.dataStream.position;
+      const position = this.binaryReader.position();
 
-      let length = this.dataStream.readUint32();
-      if (position + length == this.dataStream.byteLength) {
+      let length = this.binaryReader.readUint32();
+      if (position + length === this.binaryReader.length()) {
         lastBoxFound = true;
       }
 
-      const type = this.dataStream.readUint32();
+      const type = this.binaryReader.readUint32();
       if (length === 0) {
         lastBoxFound = true;
-        length = this.dataStream.byteLength - this.dataStream.position;
+        length = this.binaryReader.length() - this.binaryReader.position();
       } else if (length === 1) {
-        throw Error('Extended length boxes not supported');
+        throw new Error('Extended length boxes are not supported');
       }
 
-      const data = this.dataStream.readUint8Array(length);
-      const box = new Box(type, position, data.buffer);
+      const data = this.binaryReader.readUint8Array(length);
+      const dataBuffer = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
+      const box = new Box(type, position, dataBuffer);
       this._addBox(box);
 
       if (!lastBoxFound) {
-        this.dataStream.seek(position + length);
+        this.binaryReader.seek(position + length);
       }
     }
   }

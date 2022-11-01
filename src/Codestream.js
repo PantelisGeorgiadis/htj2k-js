@@ -1,3 +1,4 @@
+const BinaryReader = require('./BinaryReader');
 const {
   Segment,
   SizSegment,
@@ -9,8 +10,6 @@ const {
 } = require('./Segment');
 const { Marker, ProgressionOrder } = require('./Constants');
 const log = require('./log');
-
-const DataStream = require('datastream.js');
 
 //#region Codestream
 class Codestream {
@@ -26,9 +25,10 @@ class Codestream {
     opts = opts || {};
     this.logSegmentMarkers = opts.logSegmentMarkers || false;
 
-    this.dataStream = new DataStream(buffer);
-    this.dataStream.endianness = DataStream.BIG_ENDIAN;
+    this.binaryReader = new BinaryReader(buffer, false);
     this.segments = [];
+    this.tiles = [];
+    this.currentTile = 0;
   }
 
   /**
@@ -51,19 +51,25 @@ class Codestream {
    * @returns {number} header.components components.
    * @returns {boolean} header.decompositionLevels decompositionLevels.
    * @returns {string} header.progressionOrder progressionOrder.
+   * @throws Error if codestream ends before finding a tile segment and
+   * SIZ, COD and QCD segments are not found.
    */
   readHeader() {
-    this.dataStream.seek(0);
+    this.binaryReader.seek(0);
     this.segments.length = 0;
     let tileFound = false;
 
     for (;;) {
       // Read next segment
       const { position, marker, data } = this._readNextSegment();
+      if (position === -1 && marker === -1) {
+        log.error('File terminated early');
+        break;
+      }
 
       // Stop at the first SOT marker found and rewind stream
       if (marker === Marker.Sot) {
-        this.dataStream.seek(position);
+        this.binaryReader.seek(position);
         tileFound = true;
         break;
       }
@@ -94,13 +100,13 @@ class Codestream {
     }
 
     if (!tileFound) {
-      throw Error('Codestream ended before finding a tile segment');
+      throw new Error('Codestream ended before finding a tile segment');
     }
     const mandatorySegments = [Marker.Siz, Marker.Cod, Marker.Qcd].every((m) =>
       this.segments.some((s) => s.getMarker() === m)
     );
     if (!mandatorySegments) {
-      throw Error('SIZ, COD and QCD segments are required and were not found');
+      throw new Error('SIZ, COD and QCD segments are required and were not found');
     }
 
     const siz = this.segments.find((s) => s.getMarker() === Marker.Siz);
@@ -122,10 +128,10 @@ class Codestream {
    * Decodes the codestream.
    * @method
    * @param {Object} [opts] - Decoding options.
+   * @throws Error if a SIZ segment segment was not found,
    */
-  decode(opts) {
-    opts = opts || {};
-    this.b = opts.b || false;
+  decode(/*opts*/) {
+    //opts = opts || {};
 
     // Decode was called without reading the header segments first.
     if (this.segments.length === 0) {
@@ -134,49 +140,79 @@ class Codestream {
 
     const siz = this.segments.find((s) => s.getMarker() === Marker.Siz);
     if (!siz) {
-      throw Error('SIZ segment was not found');
+      throw new Error('SIZ segment was not found');
     }
 
     // Header parsing stopped at first tile
     // Continue iterating over tiles
     for (;;) {
-      const { position: tilePosition, data: tileData } = this._readNextSegment();
-      const sotSegment = new SotSegment(tilePosition, tileData);
-      sotSegment.parse();
-
-      //const tileStartPosition = this.dataStream.position;
-      const tilePartIndex = sotSegment.getTilePartIndex();
-
-      if (sotSegment.getTileIndex() > siz.getNumberOfTiles().getArea()) {
-        throw Error(`Wrong tile index [${tilePartIndex}]`);
-      }
-      if (tilePartIndex) {
-        if (sotSegment.getTilePartCount() && tilePartIndex >= sotSegment.getTilePartCount()) {
-          throw Error('Tile part count should be less than total number of tile parts');
-        }
+      const { marker, position, data } = this._readNextSegment();
+      if (position === -1 && marker === -1) {
+        log.error('File terminated early');
+        break;
       }
 
-      // Read segments inside tiles
-      let sodFound = false;
-      for (;;) {
-        const { position, marker, data } = this._readNextSegment();
-        if (marker === Marker.Sod) {
-          this.dataStream.seek(position);
-          sodFound = true;
-          break;
-        }
-
+      // End of codestream
+      if (marker === Marker.Eoc) {
         const segment = new Segment(marker, position, data);
         this._addSegment(segment);
+        break;
       }
 
-      if (!sodFound) {
-        throw Error(
-          `Codestream terminated early before start of data is found for tile indexed ${sotSegment.getTileIndex()} and tile part ${tilePartIndex}`
-        );
-      }
+      // Start of tile
+      if (marker === Marker.Sot) {
+        const sotSegment = new SotSegment(position, data);
+        sotSegment.parse();
+        this._addSegment(sotSegment);
 
-      this._addSegment(sotSegment);
+        const tileStartPosition = this.binaryReader.position();
+        const tilePartIndex = sotSegment.getTilePartIndex();
+
+        if (sotSegment.getTileIndex() > siz.getNumberOfTiles().getArea()) {
+          throw new Error(`Wrong tile index [${tilePartIndex}]`);
+        }
+        if (tilePartIndex) {
+          if (sotSegment.getTilePartCount() && tilePartIndex >= sotSegment.getTilePartCount()) {
+            throw new Error('Tile part count should be less than total number of tile parts');
+          }
+        }
+
+        // Read segments inside tile
+        let sodFound = false;
+        for (;;) {
+          const { position, marker, data } = this._readNextSegment();
+          if (position === -1 && marker === -1) {
+            log.error('File terminated early');
+            break;
+          }
+
+          // Start of data
+          if (marker === Marker.Sod) {
+            const segment = new Segment(marker, position, data);
+            this._addSegment(segment);
+
+            this.binaryReader.seek(position);
+            sodFound = true;
+            break;
+          }
+
+          const segment = new Segment(marker, position, data);
+          this._addSegment(segment);
+        }
+
+        if (!sodFound) {
+          throw new Error(
+            `Codestream terminated early before start of data is found for tile indexed ${sotSegment.getTileIndex()} and tile part ${tilePartIndex}`
+          );
+        }
+
+        // Parse tile
+        this._parseTileHeader(sotSegment, tileStartPosition);
+
+        // Jump to next tile
+        const tileEndPosition = tileStartPosition + sotSegment.getPayloadLength();
+        this.binaryReader.seek(tileEndPosition);
+      }
     }
   }
 
@@ -205,15 +241,11 @@ class Codestream {
    * @returns {ArrayBuffer} segment.data data.
    */
   _readNextSegment() {
-    // Position
-    const position = this.dataStream.position;
-
-    // Marker
-    let marker = this.dataStream.readUint16();
-    if ((marker & 0xff00) !== 0xff00) {
-      throw Error(`Not a marker: ${marker.toString(16)}`);
+    // Position and marker
+    let { position, marker } = this._scanNextMarker();
+    if (position === -1 && marker === -1) {
+      return { position, marker, length: 0, data: undefined };
     }
-    marker &= 0xff;
 
     // Size
     let length =
@@ -221,17 +253,51 @@ class Codestream {
       marker !== Marker.Sod &&
       marker !== Marker.Eoc &&
       (marker < 0xd0 || marker > 0xd8)
-        ? this.dataStream.readUint16() - 2
+        ? this.binaryReader.readUint16() - 2
         : 0;
 
     // Data
+    let data = undefined;
     length =
-      length > this.dataStream.byteLength - this.dataStream.position
-        ? this.dataStream.byteLength - this.dataStream.position
+      length > this.binaryReader.length() - this.binaryReader.position()
+        ? this.binaryReader.length() - this.binaryReader.position()
         : length;
-    let data = length > 0 ? this.dataStream.readUint8Array(length).buffer : undefined;
+    if (length > 0) {
+      const buffer = this.binaryReader.readUint8Array(length);
+      data = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+    }
 
     return { position, marker, length, data };
+  }
+
+  /**
+   * Scans for the next marker in the codestream.
+   * @method
+   * @private
+   * @returns {Object} nextMarker Read next marker result object.
+   * @returns {number} nextMarker.position position.
+   * @returns {Marker} nextMarker.marker marker.
+   * @throws Error if found marker is not valid.
+   */
+  _scanNextMarker() {
+    let position = -1;
+    let marker = -1;
+    while (!this.binaryReader.isAtEnd()) {
+      const m1 = this.binaryReader.readUint8();
+      if (m1 === 0xff) {
+        position = this.binaryReader.position() - 1;
+        const m2 = this.binaryReader.readUint8();
+
+        marker = (m1 << 8) | m2;
+        if ((marker & 0xff00) !== 0xff00) {
+          throw new Error(`Not a marker: ${marker.toString(16)}`);
+        }
+        marker &= 0xff;
+        break;
+      }
+    }
+
+    return { position, marker };
   }
   //#endregion
 }

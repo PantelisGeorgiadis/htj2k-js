@@ -18,6 +18,7 @@ const {
   CodeblockStyle,
   WaveletTransform,
 } = require('./Constants');
+const Tile = require('./Tile');
 const { Point, Size } = require('./Helpers');
 const log = require('./log');
 const version = require('./version');
@@ -62,6 +63,7 @@ const constants = {
 const HtJ2kJs = {
   Decoder,
   Codestream,
+  Tile,
   boxes,
   segments,
   helpers,

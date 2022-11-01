@@ -1,10 +1,12 @@
 const path = require('path');
 const TerserPlugin = require('terser-webpack-plugin');
+const CopyWebpackPlugin = require('copy-webpack-plugin');
 const { BannerPlugin } = require('webpack');
 const pkg = require('./package.json');
 
 const rootPath = process.cwd();
 const context = path.join(rootPath, 'src');
+const examplesPath = path.join(rootPath, 'examples');
 const outputPath = path.join(rootPath, 'build');
 const filename = path.parse(pkg.main).base;
 
@@ -60,6 +62,11 @@ module.exports = {
       banner: getBanner(),
       entryOnly: true,
       raw: true,
+    }),
+    new CopyWebpackPlugin({
+      patterns: [
+        { from: path.join(examplesPath, 'index.html'), to: path.join(outputPath, 'index.html') },
+      ],
     }),
   ],
 };
