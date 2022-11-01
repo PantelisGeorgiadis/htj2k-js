@@ -9,6 +9,7 @@ const {
   SotSegment,
 } = require('./Segment');
 const { Marker, ProgressionOrder } = require('./Constants');
+const Tile = require('./Tile');
 const log = require('./log');
 
 //#region Codestream
@@ -207,7 +208,7 @@ class Codestream {
         }
 
         // Parse tile
-        this._parseTileHeader(sotSegment, tileStartPosition);
+        this.tiles.push(new Tile(sotSegment, position));
 
         // Jump to next tile
         const tileEndPosition = tileStartPosition + sotSegment.getPayloadLength();
