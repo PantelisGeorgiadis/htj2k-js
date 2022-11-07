@@ -4,8 +4,8 @@ const { Decoder } = htJ2kJs;
 // https://www.html5rocks.com/en/tutorials/webgl/typed_arrays/
 
 const fs = require('fs');
-
-const fileBuffer = fs.readFileSync('./examples/lena_gray_unsigned_8_reversible.jpc');
+const fileName = process.argv[2] || './examples/lena_gray_unsigned_8_reversible.jpc';
+const fileBuffer = fs.readFileSync(fileName);
 const arrayBuffer = fileBuffer.buffer.slice(
   fileBuffer.byteOffset,
   fileBuffer.byteOffset + fileBuffer.byteLength
