@@ -1,4 +1,5 @@
 const FileParser = require('./FileParser')
+const log = require('./log');
 
 const ParserState = {
     LIVE: 1, 
@@ -38,6 +39,10 @@ class Parser {
         return bs
     }
 
+    getHandler() {
+        return this.handler
+    }
+
     advancePosition(length) {
         //console.log('advancePosition', length)
         this.position += length
@@ -48,7 +53,8 @@ class Parser {
      * @param {Buffer} chunk 
      */
     write(chunk) {
-        console.log('Parser: write chunk', chunk.length)
+        log.debug(`Parser.write(${chunk.length})`)
+
         if(this.state === ParserState.CANCELLED) {
             return false; // suspend upstream
         }
@@ -64,11 +70,13 @@ class Parser {
     }
 
     end() {
+        log.debug('Parser.end()')
         this.done = true
     }
 
     resume() {
-        console.log('Parser.resume()')
+        log.debug('Parser.resume()')
+
         if(this.state === ParserState.CANCELLED) {  
             throw new Error("Parser cannot be resumed since it was previously cancelled")
         }
@@ -81,7 +89,8 @@ class Parser {
     }
 
     wait() {
-        console.log('Parser.wait()')
+        log.debug('Parser.wait()')
+
         if(this.state === ParserState.CANCELLED) {
             throw new Error("Parser cannot be suspended since it was previously cancelled")
         }
@@ -94,7 +103,10 @@ class Parser {
      * Suspends the parser.  Data received will be queued.  Call resume() to continue parsing
      */
     suspend() {
-        console.log('Parser.suspend()')
+        log.debug('Parser.suspend()')
+        if(this.opts.trace) {
+            console.info('Parser.suspend()')
+        }
         if(this.state === ParserState.CANCELLED) {
             throw new Error("Parser cannot be suspended since it was previously cancelled")
         }
@@ -106,7 +118,7 @@ class Parser {
      * Cancels the parser.  No more data will be queued or parser
      */
     cancel() {
-        console.log('Parser.cancel()')
+        log.debug('Parser.cancel()')
         if(this.state === ParserState.CANCELLED) {
             throw new Error("Parser cannot be cancelled since it was previously cancelled")
         }

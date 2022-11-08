@@ -1,6 +1,7 @@
 
 const BoxParser = require('./BoxParser');
 const CodestreamParser = require('./CodestreamParser');
+const log = require('./log');
 
 const Jp2Rfc3745Magic = Uint8Array.from([
     0x00, 0x00, 0x00, 0x0c, 0x6a, 0x50, 0x20, 0x20, 0x0d, 0x0a, 0x87, 0x0a,
@@ -10,7 +11,7 @@ const Jp2Rfc3745Magic = Uint8Array.from([
 
 class FileParser {
     parse(parser) {
-        console.log('FileParser.parse()')
+        log.debug('FileParser.parse()')
         const bufferStream = parser.getBufferStream()
         // make sure there is enough bytes
         if(bufferStream.buffer.length - bufferStream.position < 12) {

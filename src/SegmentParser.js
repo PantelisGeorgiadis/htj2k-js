@@ -1,3 +1,6 @@
+const log = require('./log');
+
+
 const Marker = {
     Soc: 0x4f, // Start of codestream (required)
     Cap: 0x50, // Extended capability
@@ -28,8 +31,7 @@ const Marker = {
 
 class SegmentParser {
     parse(parser) {
-        //console.log('SegmentParser.parse()')
-        //parser.cancel()
+        log.debug('SegmentParser.parse()')
         
         const bufferStream = parser.getBufferStream()
         let m1 = bufferStream.buffer.readUint8(bufferStream.position)

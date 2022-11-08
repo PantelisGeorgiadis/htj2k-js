@@ -1,4 +1,5 @@
 const CodestreamParser = require('./CodestreamParser');
+const log = require('./log');
 
 const BoxType = {
     Undefined: 0x0,
@@ -32,7 +33,7 @@ class BoxParser {
     }
 
     parse(parser) {
-       //console.log('BoxParser.parse()')
+        log.debug('BoxParser.parse()')
 
         // Read length of box
         const bufferStream = parser.getBufferStream()
@@ -45,7 +46,6 @@ class BoxParser {
         if(length === 0) {
             length = 4
         }
-
 
         // box of length 1 is an extended length box
         if(length === 1) {
@@ -64,7 +64,7 @@ class BoxParser {
         //console.log("BoxType = ", type)
         Object.entries(BoxType).map((item) => {
             if(item[1] === type) {
-                console.log("BoxType: ", item[0], 'Length:', length)
+                log.debug(`BoxType: ${item[0]} Length: ${length}`)
             }
         })
 

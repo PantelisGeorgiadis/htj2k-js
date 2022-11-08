@@ -1,4 +1,5 @@
 const Writable = require('stream').Writable;
+const log = require('./log');
 
 class ParserWriter extends Writable {
 
@@ -9,7 +10,7 @@ class ParserWriter extends Writable {
     }
 
     _write(chunk, encoding, callback) {
-
+        log.debug(`ParserWriter._write(${chunk.length})`)
         let forceDrain = false;
 
         try {
@@ -22,8 +23,8 @@ class ParserWriter extends Writable {
         return forceDrain;
     }
 
-    end(chunk, encoding) {
-        console.log('Writer "end"', chunk);
+    end() {
+        log.debug(`ParserWriter.end()`)
         this.parser.end()
     }
 

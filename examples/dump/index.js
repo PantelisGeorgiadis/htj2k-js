@@ -1,12 +1,18 @@
 const Parser = require('../../src/Parser')
 const ParserWriter = require('../../src/ParserWriter')
-
+const log = require('../../src/log');
 const fs = require('fs');
+
+log.setLevel("info")
 
 const fileName = process.argv[2] || './examples/lena_gray_unsigned_8_reversible.jpc'
 
-const handler = {}
-const parser = new Parser(handler)
+const segment = (segment) => {
+    console.log("NEW SEGMENT", segment)
+}
+
+const handler = {segment}
+const parser = new Parser(handler, {trace: true})
 const parserWriter = new ParserWriter(parser)
 
 // Use the pipeline API to easily pipe a series of streams
