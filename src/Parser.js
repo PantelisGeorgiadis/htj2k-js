@@ -19,13 +19,25 @@ class Parser {
         this.handler = handler
         this.opts = opts || {}
 
-        this.state = ParserState.SUSPENDED
+        this.state = ParserState.WAITING
         this.chunks = []
         this.buffer = Buffer.alloc(0)
         this.position = 0
         this.offset = 0 // offset from beginning of HTJ2K code stream
         this.parser = new FileParser()
         this.done = false
+        this.promises = []
+    }
+
+    complete() {
+        const promiseWrapper = {}
+        promiseWrapper.promise = new Promise((resolve, reject) => {
+            promiseWrapper.resolve = resolve
+            promiseWrapper.reject = reject
+        })
+        
+        this.promises.push(promiseWrapper)
+        return promiseWrapper.promise
     }
 
     getBufferStream() {
@@ -72,6 +84,9 @@ class Parser {
     end() {
         log.debug('Parser.end()')
         this.done = true
+        this.promises.forEach((promise) => {
+            promise.resolve()
+        })
     }
 
     resume() {

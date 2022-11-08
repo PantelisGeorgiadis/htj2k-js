@@ -1,6 +1,5 @@
 const log = require('./log');
 
-
 const Marker = {
     Soc: 0x4f, // Start of codestream (required)
     Cap: 0x50, // Extended capability
