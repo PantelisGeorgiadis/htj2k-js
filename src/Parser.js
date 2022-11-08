@@ -8,6 +8,13 @@ const ParserState = {
     CANCELLED: 4
 }
 
+//TODO:
+// * Get rid of suspended state?
+// * Turn this.done into a ParserState
+// * Extract the BufferStream code into a separate class (getBufferStream, advancePosition)
+// * Cleanup the promise code
+// * Add support for rejecting the promise on error
+
 //#region Parser
 class Parser {
     /**
@@ -29,6 +36,12 @@ class Parser {
         this.promises = []
     }
 
+    /**
+     * Returns a promise that resolves once the parsing is complete.  Parsing is complete
+     * once the end() or cancel() is called.  
+     * 
+     * @returns promise
+     */
     complete() {
         const promiseWrapper = {}
         promiseWrapper.promise = new Promise((resolve, reject) => {
@@ -68,7 +81,7 @@ class Parser {
         log.debug(`Parser.write(${chunk.length})`)
 
         if(this.state === ParserState.CANCELLED) {
-            return false; // suspend upstream
+            return false // write has failed
         }
 
         // save the chunk and create a bigger contiguous buffer
@@ -79,8 +92,13 @@ class Parser {
         if(this.state === ParserState.WAITING) {
             this.resume()
         }
+        return true
     }
 
+    /**
+     * Clients should call this after an entire HTJ2K codestream has been passed
+     * to the parser via write().
+     */
     end() {
         log.debug('Parser.end()')
         this.done = true
@@ -89,6 +107,9 @@ class Parser {
         })
     }
 
+    /**
+     * Resumes parsing after suspend() was previously called
+     */
     resume() {
         log.debug('Parser.resume()')
 
@@ -103,6 +124,10 @@ class Parser {
         }
     }
 
+    /**
+     * Puts the parser in wait mode.  Parsing will continue once new data is passed 
+     * via write()
+     */
     wait() {
         log.debug('Parser.wait()')
 
@@ -111,7 +136,6 @@ class Parser {
         }
 
         this.state = ParserState.WAITING
-
     }
 
     /**
@@ -139,6 +163,11 @@ class Parser {
         }
 
         this.state = ParserState.CANCELLED
+
+        this.promises.forEach((promise) => {
+            promise.resolve()
+        })
+
     }
 }
 

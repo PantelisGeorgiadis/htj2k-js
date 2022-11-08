@@ -11,18 +11,11 @@ class CodestreamParser {
     parse(parser) {
         log.debug('CodestreamParser.parse()')
         const bufferStream = parser.getBufferStream()
-        // must have at least two bytes
-        if(2 > bufferStream.buffer.length - bufferStream.position) {
-            parser.wait()
-            return this
-        }
 
         const result = this.parser.parse(parser)
-
         // bad result, scan forward...
         if(!result) {
-            console.log('.')
-            parser.advancePosition(1)
+            parser.wait()
             return this
         }
 

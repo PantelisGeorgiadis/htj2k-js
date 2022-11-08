@@ -33,6 +33,12 @@ class SegmentParser {
         log.debug('SegmentParser.parse()')
         
         const bufferStream = parser.getBufferStream()
+
+        // must have at least two bytes
+        if(2 > bufferStream.buffer.length - bufferStream.position) {
+            return
+        }
+
         let m1 = bufferStream.buffer.readUint8(bufferStream.position)
         if (m1 !== 0xff) {
             return 
@@ -56,29 +62,39 @@ class SegmentParser {
         })
 
         if(!markerName) {
+            // TODO error?
             return
         }
 
         if(marker !== Marker.Sot) {
+            if(bufferStream.position + length + 2 > bufferStream.buffer.length) {
+                return
+            }
             parser.advancePosition(length + 2)
             return {
-                position: bufferStream.position,
+                position: bufferStream.position,  // position of the marker (0xff)
                 markerName : markerName ? markerName[0] : '',
                 marker,
                 length
             }
-         } else if(marker == Marker.Sot) {
-            parser.advancePosition(4)
-            let bufferStream = parser.getBufferStream()
+         } else {
+            if(bufferStream.position + 12 > bufferStream.buffer.length) {
+                return
+            }
 
-            const tileIndex = bufferStream.buffer.readUint16BE(bufferStream.position);
-            const tilePartLength = bufferStream.buffer.readUint32BE(bufferStream.position + 2);
-            const tilePartIndex = bufferStream.buffer.readUint8(bufferStream.position + 6);
-            const tilePartCount = bufferStream.buffer.readUint8(bufferStream.position + 7)
+            const tileIndex = bufferStream.buffer.readUint16BE(bufferStream.position + 4)
+            const tilePartLength = bufferStream.buffer.readUint32BE(bufferStream.position + 4 + 2)
+            const tilePartIndex = bufferStream.buffer.readUint8(bufferStream.position + 4 + 6)
+            const tilePartCount = bufferStream.buffer.readUint8(bufferStream.position + 4 + 7)
 
-            parser.advancePosition(tilePartLength - 4)            
+            if(bufferStream.position + tilePartLength > bufferStream.buffer.length) {
+                return
+            }
+
+            parser.advancePosition(tilePartLength)            
+            
             return {
-                position: bufferStream.position,
+                position: bufferStream.position, // position of the marker (0xff)
                 markerName : markerName ? markerName[0] : '',
                 marker,
                 length,

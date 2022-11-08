@@ -24,37 +24,44 @@ const getEndPosition = (bufferStream, sotSegments, endResolution) => {
 const createResponse = (bufferStream, sotSegments, startResolution, endResolution) => {
     let startPosition = getStartPosition(bufferStream, sotSegments, startResolution)
     let endPosition = getEndPosition(bufferStream, sotSegments, endResolution)
-    //console.log('startPosition = ', startPosition)
-    //console.log('endPosition = ', endPosition)
     return bufferStream.buffer.slice(startPosition, endPosition)
 }
 
 const getResolutionRange = async (readable, startResolution, endResolution) => {
 
+    let parser = undefined
+
     let sotSegments = []
 
     const segment = (segment) => {
-        //console.log("NEW SEGMENT", segment)
+        //console.log(segment)
         if(segment.markerName === 'Sot') {
             sotSegments.push(segment)
         }
-        else if (segment.markerName === 'Eoc') {
-            // end
+
+        // cancel the parsing once we have the data we need so we don't
+        // waste resources
+        if(endResolution !== undefined) {
+            if(sotSegments.length > endResolution) {
+                parser.cancel()
+            }
         }
-
-        //if(sotSegments.length === endResolution
-
     }
-    
+
     const handler = {segment}
-    const parser = new Parser(handler, {trace: true})
+    parser = new Parser(handler, {trace: true})
     const parserWriter = new ParserWriter(parser)
+
+    // This is called when the parser is cancelled due to early termination
+    // TODO: Add logic to detect errors due to early termination/cancelling vs 
+    //       other error types
+    parserWriter.on('error', (err) => {
+        //console.log('ERR CAUGHT:', err)
+    })
 
     readable.pipe(parserWriter)
 
     await parser.complete()
-    //console.log('done!!')
-    //console.log(sotSegments)
 
     const bufferStream = parser.getBufferStream()
 

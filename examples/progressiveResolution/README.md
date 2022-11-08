@@ -51,15 +51,15 @@ responseBuffer of length 48268
 
 ```
 $ node examples/progressiveResolution/index.js examples/MR01.jph 0 0
-responseBuffer of length 4543
+responseBuffer of length 4539
 ```
 
 ```
 $ node examples/progressiveResolution/index.js examples/MR01.jph 0 1
-responseBuffer of length 14788
+responseBuffer of length 14784
 ```
 
 ```
 $ node examples/progressiveResolution/index.js examples/MR01.jph 2 2
-responseBuffer of length 33480
+responseBuffer of length 33482
 ```
