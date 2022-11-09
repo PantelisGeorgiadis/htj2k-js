@@ -40,11 +40,11 @@ const getResolutionRange = async (readable, startResolution, endResolution) => {
         }
 
         // cancel the parsing once we have the data we need so we don't
-        // waste resources
+        // waste resources.  This will result in a ParseCancelledError being thrown
+        // on the parseWriter 
         if(endResolution !== undefined) {
             if(sotSegments.length > endResolution) {
                 parser.cancel()
-                console.log(parser)
             }
         }
     }
@@ -53,11 +53,14 @@ const getResolutionRange = async (readable, startResolution, endResolution) => {
     parser = new Parser(handler, {trace: true})
     const parserWriter = new ParserWriter(parser)
 
-    // This is called when the parser is cancelled due to early termination
-    // TODO: Add logic to detect errors due to early termination/cancelling vs 
-    //       other error types
+    // This is called when an error occurs.  The parser will throw a ParseCancelledError
+    // if the parser is cancelled so we check for this and suppress it since this is
+    // expected behavior in an early termination case where a request does not requrie
+    // the full bitstream
     parserWriter.on('error', (err) => {
-        //console.log('ERR CAUGHT:', err)
+        if(err.name !== 'ParseCancelledError') {
+            console.log(err)
+        }
     })
 
     readable.pipe(parserWriter)

@@ -1,5 +1,6 @@
 const Writable = require('stream').Writable;
 const log = require('./log');
+const ParseCancelledError = require('./ParseCancelledError')
 
 class ParserWriter extends Writable {
 
@@ -15,15 +16,12 @@ class ParserWriter extends Writable {
 
         try {
             const result = this.parser.write(chunk)
-            //console.log('parser.write returned', result)
             if(!result) {
-                //console.log("!result")
-                callback(Error("Parsing was cancelled"))
+                callback(new ParseCancelledError())
               return forceDrain
             }
             callback();
         } catch(err) {
-            //console.log('errrrr', err)
             callback(err)
         }
 
