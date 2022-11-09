@@ -1,8 +1,8 @@
 class ParseCancelledError extends Error {
-    constructor() {
-        super("Parsing has been cancelled")
-        this.name = "ParseCancelledError"
-    }
+  constructor() {
+    super('Parsing has been cancelled');
+    this.name = 'ParseCancelledError';
+  }
 }
 
-module.exports = ParseCancelledError
+module.exports = ParseCancelledError;

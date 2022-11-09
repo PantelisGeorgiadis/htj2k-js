@@ -1,38 +1,36 @@
 const Writable = require('stream').Writable;
 const log = require('./log');
-const ParseCancelledError = require('./ParseCancelledError')
+const ParseCancelledError = require('./ParseCancelledError');
 
 class ParserWriter extends Writable {
+  constructor(parser, options) {
+    super(options);
 
-    constructor(parser, options) {
-        super(options)
+    this.parser = parser;
+  }
 
-        this.parser = parser
-    }
+  _write(chunk, encoding, callback) {
+    log.debug(`ParserWriter._write(${chunk.length})`);
+    let forceDrain = false;
 
-    _write(chunk, encoding, callback) {
-        log.debug(`ParserWriter._write(${chunk.length})`)
-        let forceDrain = false;
-
-        try {
-            const result = this.parser.write(chunk)
-            if(!result) {
-                callback(new ParseCancelledError())
-              return forceDrain
-            }
-            callback();
-        } catch(err) {
-            callback(err)
-        }
-
+    try {
+      const result = this.parser.write(chunk);
+      if (!result) {
+        callback(new ParseCancelledError());
         return forceDrain;
+      }
+      callback();
+    } catch (err) {
+      callback(err);
     }
 
-    end() {
-        log.debug(`ParserWriter.end()`)
-        this.parser.end()
-    }
+    return forceDrain;
+  }
 
+  end() {
+    log.debug(`ParserWriter.end()`);
+    this.parser.end();
+  }
 }
 
-module.exports = ParserWriter
+module.exports = ParserWriter;
