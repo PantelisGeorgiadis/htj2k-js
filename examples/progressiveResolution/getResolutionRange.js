@@ -44,6 +44,7 @@ const getResolutionRange = async (readable, startResolution, endResolution) => {
         if(endResolution !== undefined) {
             if(sotSegments.length > endResolution) {
                 parser.cancel()
+                console.log(parser)
             }
         }
     }
