@@ -203,7 +203,7 @@ class SizSegment extends Segment {
   }
 
   /**
-   * Gets sub-sampling X a component.
+   * Gets sub-sampling X for a component.
    * @method
    * @param {number} component - Component.
    * @returns {number} The sub-sampling X.
@@ -218,7 +218,7 @@ class SizSegment extends Segment {
   }
 
   /**
-   * Gets sub-sampling Y a component.
+   * Gets sub-sampling Y for a component.
    * @method
    * @param {number} component - Component.
    * @returns {number} The sub-sampling Y.
@@ -252,21 +252,6 @@ class SizSegment extends Segment {
   }
 
   /**
-   * Gets number of tiles.
-   * @method
-   * @returns {Size} The width.
-   */
-  getNumberOfTiles() {
-    const w = this.getRefGridSize().getWidth() - this.getTileOffset().getX();
-    const h = this.getRefGridSize().getHeight() - this.getTileOffset().getY();
-
-    return new Size(
-      MathFunction.divCeil(w, this.getTileSize().getWidth()),
-      MathFunction.divCeil(h, this.getTileSize().getHeight())
-    );
-  }
-
-  /**
    * Gets height for a component.
    * @method
    * @param {number} component - Component.
@@ -282,6 +267,21 @@ class SizSegment extends Segment {
     return (
       MathFunction.divCeil(this.getRefGridSize().getHeight(), ds) -
       MathFunction.divCeil(this.getImageOffset().getY(), ds)
+    );
+  }
+
+  /**
+   * Gets number of tiles.
+   * @method
+   * @returns {Size} The number of tiles.
+   */
+  getNumberOfTiles() {
+    const w = this.getRefGridSize().getWidth() - this.getTileOffset().getX();
+    const h = this.getRefGridSize().getHeight() - this.getTileOffset().getY();
+
+    return new Size(
+      MathFunction.divCeil(w, this.getTileSize().getWidth()),
+      MathFunction.divCeil(h, this.getTileSize().getHeight())
     );
   }
 
@@ -527,15 +527,22 @@ class CodSegment extends Segment {
   }
 
   /**
-   * Gets codeblock width.
+   * Gets codeblock size.
    * @method
-   * @returns {number} The codeblock width.
+   * @returns {Size} The codeblock size.
    */
   getCodeblockSize() {
     return new Size(1 << (this.codeblockExpnX + 2), 1 << (this.codeblockExpnY + 2));
   }
 
-  // TODO: get_log_precinct_size, get_precinct_size, packets_may_use_sop, packets_use_eph
+  /**
+   * Gets log codeblock size.
+   * @method
+   * @returns {Size} The log codeblock size.
+   */
+  getLogCodeblockSize() {
+    return new Size(this.codeblockExpnX + 2, this.codeblockExpnY + 2);
+  }
 
   /**
    * Gets codeblock style.
@@ -562,6 +569,21 @@ class CodSegment extends Segment {
    */
   isReversible() {
     return this.waveletFilter === WaveletTransform.Reversible_5_3;
+  }
+
+  /**
+   * Gets precinct size for a decomposition level.
+   * @method
+   * @param {number} level - Decomposition level.
+   * @returns {Size} The precinct size.
+   * @throws Error if requested level is out of range.
+   */
+  getPrecinctSize(level) {
+    if (level > this.getDecompositionLevels()) {
+      throw new Error(`Requested precinct is out of range [${level}]`);
+    }
+
+    return new Size(this.precinctSizeX[level], this.precinctSizeY[level]);
   }
 
   /**

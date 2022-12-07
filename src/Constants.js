@@ -19,9 +19,8 @@ Object.freeze(J2kFormat);
 const BoxType = {
   Undefined: 0x0,
   Jp2SignatureBox: 0x6a502020,
-
   FileTypeBox: 0x66747970,
-  JP2HeaderBox: 0x6a703268,
+  Jp2HeaderBox: 0x6a703268,
   ImageHeaderBox: 0x69686472,
   BitsPerCompBox: 0x62706363,
   ColorSpecBox: 0x636f6c72,
@@ -65,7 +64,6 @@ const Marker = {
   Eph: 0x92, // End of packet
   Sod: 0x93, // Start of data
   Eoc: 0xd9, // End of codestream (required)
-
   Coc: 0x53, // Coding style component
   Rgn: 0x5e, // Region of interest
   Poc: 0x5f, // Progression order change
@@ -139,6 +137,20 @@ const WaveletTransform = {
 Object.freeze(WaveletTransform);
 //#endregion
 
+//#region SubBandType
+/**
+ * SubBand types.
+ * @constant {Object}
+ */
+const SubBandType = {
+  Ll: 'LL',
+  Hl: 'HL',
+  Lh: 'LH',
+  Hh: 'HH',
+};
+Object.freeze(SubBandType);
+//#endregion
+
 //#region Exports
 module.exports = {
   BoxType,
@@ -148,5 +160,6 @@ module.exports = {
   CodingStyle,
   CodeblockStyle,
   WaveletTransform,
+  SubBandType,
 };
 //#endregion

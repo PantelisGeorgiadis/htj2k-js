@@ -9,7 +9,8 @@ const {
   SotSegment,
 } = require('./Segment');
 const { Marker, ProgressionOrder } = require('./Constants');
-const Tile = require('./Tile');
+const { Tile, TilePart } = require('./Coding');
+const { Rectangle, Point, Size } = require('./Helpers');
 const log = require('./log');
 
 //#region Codestream
@@ -29,7 +30,6 @@ class Codestream {
     this.binaryReader = new BinaryReader(buffer, false);
     this.segments = [];
     this.tiles = [];
-    this.currentTile = 0;
   }
 
   /**
@@ -58,6 +58,7 @@ class Codestream {
   readHeader() {
     this.binaryReader.seek(0);
     this.segments.length = 0;
+    this.tiles.length = 0;
     let tileFound = false;
 
     for (;;) {
@@ -112,6 +113,10 @@ class Codestream {
 
     const siz = this.segments.find((s) => s.getMarker() === Marker.Siz);
     const cod = this.segments.find((s) => s.getMarker() === Marker.Cod);
+    const qcd = this.segments.find((s) => s.getMarker() === Marker.Qcd);
+
+    // Create empty tiles
+    this._createTiles(siz, cod, qcd);
 
     return {
       width: siz.getWidth(0),
@@ -160,7 +165,7 @@ class Codestream {
         break;
       }
 
-      // Start of tile
+      // Start of tile part
       if (marker === Marker.Sot) {
         const sotSegment = new SotSegment(position, data);
         sotSegment.parse();
@@ -178,7 +183,7 @@ class Codestream {
           }
         }
 
-        // Read segments inside tile
+        // Read segments inside tile part
         let sodFound = false;
         for (;;) {
           const { position, marker, data } = this._readNextSegment();
@@ -203,14 +208,18 @@ class Codestream {
 
         if (!sodFound) {
           throw new Error(
-            `Codestream terminated early before start of data is found for tile indexed ${sotSegment.getTileIndex()} and tile part ${tilePartIndex}`
+            `Codestream terminated early before start of data is found for tile index ${sotSegment.getTileIndex()} and tile part ${tilePartIndex}`
           );
         }
 
-        // Parse tile
-        this.tiles.push(new Tile(sotSegment, position));
+        // Add tile part to tile
+        const tile = this.tiles.find((t) => t.getTileIndex() === sotSegment.getTileIndex());
+        if (!tile) {
+          throw new Error(`Couldn't find tile with index ${sotSegment.getTileIndex()}`);
+        }
+        tile.addTilePart(new TilePart(sotSegment, position));
 
-        // Jump to next tile
+        // Jump to next tile part
         const tileEndPosition = tileStartPosition + sotSegment.getPayloadLength();
         this.binaryReader.seek(tileEndPosition);
       }
@@ -299,6 +308,48 @@ class Codestream {
     }
 
     return { position, marker };
+  }
+
+  /**
+   * Create empty tiles.
+   * @method
+   * @private
+   * @param {SizSegment} siz - SIZ segment.
+   * @param {CodSegment} cod - COD segment.
+   * @param {QcdSegment} qcd - QCD segment.
+   */
+  _createTiles(siz, cod, qcd) {
+    const numberOfTiles = siz.getNumberOfTiles();
+    let index = 0;
+    for (let i = 0; i < numberOfTiles.getHeight(); i++) {
+      for (let j = 0; j < numberOfTiles.getWidth(); j++) {
+        const tileRect = new Rectangle(
+          new Point(
+            Math.max(
+              siz.getTileOffset().getX() + j * siz.getTileSize().getWidth(),
+              siz.getImageOffset().getX()
+            ),
+            Math.max(
+              siz.getTileOffset().getY() + i * siz.getTileSize().getHeight(),
+              siz.getImageOffset().getY()
+            )
+          ),
+          new Size(
+            Math.min(
+              siz.getTileOffset().getX() + (j + 1) * siz.getTileSize().getWidth(),
+              siz.getRefGridSize().getWidth()
+            ),
+            Math.min(
+              siz.getTileOffset().getY() + (j + 1) * siz.getTileSize().getHeight(),
+              siz.getRefGridSize().getHeight()
+            )
+          )
+        );
+
+        this.tiles.push(new Tile(index, tileRect, siz, cod, qcd));
+        index++;
+      }
+    }
   }
   //#endregion
 }

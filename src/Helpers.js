@@ -11,6 +11,23 @@ class MathFunction {
     // ~~ is a faster Math.floor
     return ~~((a + b - 1) / b);
   }
+
+  /**
+   * Calculates log base 2.
+   * @method
+   * @param {number} x - Value.
+   * @returns {number} Result.
+   */
+  static log2(x) {
+    let n = 1;
+    let i = 0;
+    while (x > n) {
+      n <<= 1;
+      i++;
+    }
+
+    return i;
+  }
 }
 //#endregion
 
@@ -143,6 +160,66 @@ class Size {
 }
 //#endregion
 
+//#region Rect
+class Rectangle {
+  /**
+   * Creates an instance of Rectangle.
+   * @constructor
+   * @param {Point} [point] - Point.
+   * @param {Size} [size] - Size.
+   */
+  constructor(point, size) {
+    this.point = point || new Point();
+    this.size = size || new Size();
+  }
+
+  /**
+   * Gets point.
+   * @method
+   * @returns {Point} Point.
+   */
+  getPoint() {
+    return this.point;
+  }
+
+  /**
+   * Sets point.
+   * @method
+   * @param {Point} point - Point.
+   */
+  setPoint(point) {
+    this.point = point;
+  }
+
+  /**
+   * Gets size.
+   * @method
+   * @returns {Size} Size.
+   */
+  getSize() {
+    return this.size;
+  }
+
+  /**
+   * Sets size.
+   * @method
+   * @param {Size} size - Size.
+   */
+  setSize(size) {
+    this.size = size;
+  }
+
+  /**
+   * Gets the rectangle description.
+   * @method
+   * @returns {string} Rectangle description.
+   */
+  toString() {
+    return `Rectangle [point: ${this.getPoint().toString()}, size: ${this.getSize().toString()}]`;
+  }
+}
+//#endregion
+
 //#region Exports
-module.exports = { MathFunction, Point, Size };
+module.exports = { MathFunction, Point, Size, Rectangle };
 //#endregion

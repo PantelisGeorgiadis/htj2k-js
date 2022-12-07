@@ -17,9 +17,10 @@ const {
   CodingStyle,
   CodeblockStyle,
   WaveletTransform,
+  SubBandType,
 } = require('./Constants');
-const Tile = require('./Tile');
-const { Point, Size } = require('./Helpers');
+const { Tile, TilePart, TileComponent, Resolution, SubBand } = require('./Coding');
+const { Point, Size, Rectangle } = require('./Helpers');
 const log = require('./log');
 const version = require('./version');
 
@@ -27,6 +28,7 @@ const version = require('./version');
 const helpers = {
   Point,
   Size,
+  Rectangle,
 };
 //#endregion
 
@@ -39,6 +41,16 @@ const segments = {
   QcdSegment,
   ComSegment,
   SotSegment,
+};
+//#endregion
+
+//#region coding
+const coding = {
+  Tile,
+  TilePart,
+  TileComponent,
+  Resolution,
+  SubBand,
 };
 //#endregion
 
@@ -57,13 +69,14 @@ const constants = {
   CodingStyle,
   CodeblockStyle,
   WaveletTransform,
+  SubBandType,
 };
 //#endregion
 
 const HtJ2kJs = {
   Decoder,
   Codestream,
-  Tile,
+  coding,
   boxes,
   segments,
   helpers,

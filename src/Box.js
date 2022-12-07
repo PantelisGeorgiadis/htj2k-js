@@ -70,7 +70,9 @@ class Box {
   toString() {
     return `Box [Type: ${this._typeFromValue(
       this.getType()
-    )}, Position: ${this.getPosition()}, Length: ${this.getLength()}]`;
+    )}, Position: ${this.getPosition()} (0x${this.getPosition().toString(
+      16
+    )}) Length: ${this.getLength()}]`;
   }
 
   //#region Private Methods
