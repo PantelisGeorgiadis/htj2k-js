@@ -7,6 +7,7 @@ const {
   QcdSegment,
   ComSegment,
   SotSegment,
+  TlmSegment,
 } = require('./Segment');
 const { Marker, ProgressionOrder } = require('./Constants');
 const Tile = require('./Tile');
@@ -91,6 +92,9 @@ class Codestream {
         segment.parse();
       } else if (marker === Marker.Com) {
         segment = new ComSegment(position, data);
+        segment.parse();
+      } else if (marker === Marker.Tlm) {
+        segment = new TlmSegment(position, data);
         segment.parse();
       } else {
         segment = new Segment(marker, position, data);

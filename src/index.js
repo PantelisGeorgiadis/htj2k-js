@@ -8,6 +8,7 @@ const {
   QcdSegment,
   ComSegment,
   SotSegment,
+  TlmSegment,
 } = require('./Segment');
 const { Box, BoxReader } = require('./Box');
 const {
@@ -39,6 +40,7 @@ const segments = {
   QcdSegment,
   ComSegment,
   SotSegment,
+  TlmSegment,
 };
 //#endregion
 

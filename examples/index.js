@@ -15,4 +15,6 @@ const htj2kd = new Decoder(arrayBuffer, { logSegmentMarkers: true, logBoxes: tru
 const ret = htj2kd.readHeader();
 const ret2 = htj2kd.decode();
 
-console.log('ret:', ret);
+// console.log('ret:', ret);
+// console.log('ret2:', ret2)
+console.log('segments', htj2kd.codestream.getSegments())

@@ -878,6 +878,139 @@ class ComSegment extends Segment {
 }
 //#endregion
 
+//#region TlmSegment
+class TlmSegment extends Segment {
+  /**
+   * Creates an instance of TlmSegment.
+   * @constructor
+   * @param {number} position - Segment position in codestream.
+   * @param {ArrayBuffer} buffer - Segment buffer.
+   */
+  constructor(position, buffer) {
+    super(Marker.Tlm, position, buffer);
+
+    this.Ltlm = undefined;
+    this.Ztlm = undefined;
+    this.Stlm = undefined;
+    this.Ttlm = [];
+    this.Ptlm = [];
+  }
+
+  /**
+   * Gets Length of marker segment in bytes.
+   * @method
+   * @returns {number} Length of marker segment in bytes (not including the marker)..
+   */
+  getLtlm() {
+    return this.Ltlm;
+  }
+
+  /**
+   * Gets TLM marker segment index relative to any others in the header.
+   * @method
+   * @returns {string} TLM marker index.
+   */
+  getZtlm() {
+    return this.Ztlm;
+  }
+
+  /**
+   * Gets TLM marker size of Ttlm and Ptlm parameters.
+   * @method
+   * @returns {string} TLM marker index.
+   */
+  getStlm() {
+    return this.Stlm;
+  }
+
+  /**
+   * Gets array of Ttlm values. Tile number of the ith tile-part. Either none or
+   * one value for every tile-part. The number of tile-parts can
+   * be derived from the length of this marker segment or from a non-zero TNsot
+   * parameter, if present.
+   * @method
+   * @returns {string} Array of tile numbers for tile-parts, if more than one
+   * tile-part per tile.
+   */
+  getTtlm() {
+    return this.Ttlm;
+  }
+
+  /**
+   * Gets array of Ptlm values. Length, in bytes, from the beginning of the SOT
+   * marker of the ith tile-part to the end of the data for that
+   * tile-part. One value for every tile-part. The number of tile-parts can be
+   * derived from the length of this marker segment.
+   * @method
+   * @returns {string} Array of tile-part lengths from beginning of SOT marker.
+   */
+  getPtlm() {
+    return this.Ptlm;
+  }
+
+  /**
+   * Parses the segment.
+   * @method
+   */
+  parse() {
+    const binaryReader = new BinaryReader(this.getBuffer(), false);
+
+    // this.Ltlm = binaryReader.readUint16();
+    this.Ltlm = this.getLength();
+    this.Ztlm = binaryReader.readUint8();
+    this.Stlm = binaryReader.readUint8();
+
+    const StlmTable = {
+      0: {st: 0, sp: 0},
+      16: {st: 1, sp: 0},
+      32: {st: 2, sp: 0},
+      64: {st: 0, sp: 1},
+      80: {st: 1, sp: 1},
+      96: {st: 2, sp: 1},
+    }
+
+    const {st, sp} = StlmTable[this.Stlm];
+    if (st === undefined) {
+      throw new Error('Undefined Stlm value');
+    }
+    const lengthOfTlmParams = binaryReader.length() - binaryReader.position();
+
+    const TtlmBits = st === 0 ? 0 : st === 1 ? 8 : 16;
+    const PtlmBits = sp === 0 ? 16 : 32;
+    const numTiles = lengthOfTlmParams / ((TtlmBits + PtlmBits) / 8);
+
+    for (let i = 0; i < numTiles; i += 1) {
+      if (st > 0) {
+        if (TtlmBits === 8) {
+          this.Ttlm.push(binaryReader.readUint8());
+        } else if (TtlmBits === 16) {
+          this.Ttlm.push(binaryReader.readUint16());
+        } else {
+          throw new Error('Stlm value out of range');
+        }
+      }
+      if (PtlmBits === 16) {
+        console.log('read at position:', binaryReader.position())
+        this.Ptlm.push(binaryReader.readUint16());
+      } else if (PtlmBits === 32) {
+        this.Ptlm.push(binaryReader.readUint32());
+      } else {
+        throw new Error('Ptlm value out of range');
+      }
+    }
+  }
+
+  /**
+   * Gets the segment description.
+   * @method
+   * @return {string} Segment description.
+   */
+  toString() {
+    return `${super.toString()} [Ltlm: ${this.getLtlm()}, Ztlm: ${this.getZtlm()}, Stlm: ${this.getStlm()}, Ttlm: ${this.getTtlm()}, Ptlm: ${this.getPtlm()}]`;
+  }
+}
+//#endregion
+
 //#region Exports
 module.exports = {
   Segment,
@@ -887,5 +1020,6 @@ module.exports = {
   QcdSegment,
   ComSegment,
   SotSegment,
+  TlmSegment
 };
 //#endregion
