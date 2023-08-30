@@ -35,10 +35,23 @@ const BoxType = {
   XmlBox: 0x786d6c20,
   UuidBox: 0x75756964,
   UuidInfoBox: 0x75696e66,
-  UuidListBox: 0x75637374,
+  UuidListBox: 0x756c7374,
   UrlBox: 0x75726c20,
 };
 Object.freeze(BoxType);
+//#endregion
+
+//#region EnumeratedColorSpace
+/**
+ * Jpeg2000 enumerated color spaces.
+ * @constant {Object}
+ */
+const EnumeratedColorSpace = {
+  sRgb: 16,
+  Gray: 17,
+  Ycc: 18,
+};
+Object.freeze(EnumeratedColorSpace);
 //#endregion
 
 //#region Marker
@@ -154,12 +167,13 @@ Object.freeze(SubBandType);
 //#region Exports
 module.exports = {
   BoxType,
+  CodeblockStyle,
+  CodingStyle,
+  EnumeratedColorSpace,
   J2kFormat,
   Marker,
   ProgressionOrder,
-  CodingStyle,
-  CodeblockStyle,
-  WaveletTransform,
   SubBandType,
+  WaveletTransform,
 };
 //#endregion

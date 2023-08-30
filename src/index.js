@@ -1,26 +1,38 @@
-const Codestream = require('./Codestream');
-const Decoder = require('./Decoder');
 const {
-  Segment,
-  SizSegment,
   CapSegment,
   CodSegment,
-  QcdSegment,
   ComSegment,
+  QcdSegment,
+  Segment,
+  SizSegment,
   SotSegment,
+  TlmSegment,
 } = require('./Segment');
-const { Box, BoxReader } = require('./Box');
 const {
+  Box,
+  BoxReader,
+  ColorSpecificationBox,
+  FileTypeBox,
+  ImageHeaderBox,
+  Jp2SignatureBox,
+  UrlBox,
+  XmlBox,
+} = require('./Box');
+const {
+  BoxType,
+  CodeblockStyle,
+  CodingStyle,
+  EnumeratedColorSpace,
   J2kFormat,
   Marker,
   ProgressionOrder,
-  CodingStyle,
-  CodeblockStyle,
-  WaveletTransform,
   SubBandType,
+  WaveletTransform,
 } = require('./Constants');
-const { Tile, TilePart, TileComponent, Resolution, SubBand } = require('./Coding');
-const { Point, Size, Rectangle } = require('./Helpers');
+const { Resolution, SubBand, Tile, TileComponent, TilePart } = require('./Coding');
+const { Point, Rectangle, Size } = require('./Helpers');
+const Codestream = require('./Codestream');
+const Decoder = require('./Decoder');
 const log = require('./log');
 const version = require('./version');
 
@@ -34,13 +46,14 @@ const helpers = {
 
 //#region segments
 const segments = {
-  Segment,
-  SizSegment,
   CapSegment,
   CodSegment,
-  QcdSegment,
   ComSegment,
+  QcdSegment,
+  Segment,
+  SizSegment,
   SotSegment,
+  TlmSegment,
 };
 //#endregion
 
@@ -58,18 +71,26 @@ const coding = {
 const boxes = {
   Box,
   BoxReader,
+  ColorSpecificationBox,
+  FileTypeBox,
+  ImageHeaderBox,
+  Jp2SignatureBox,
+  UrlBox,
+  XmlBox,
 };
 //#endregion
 
 //#region constants
 const constants = {
+  BoxType,
+  CodeblockStyle,
+  CodingStyle,
+  EnumeratedColorSpace,
   J2kFormat,
   Marker,
   ProgressionOrder,
-  CodingStyle,
-  CodeblockStyle,
-  WaveletTransform,
   SubBandType,
+  WaveletTransform,
 };
 //#endregion
 

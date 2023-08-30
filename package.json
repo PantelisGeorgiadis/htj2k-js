@@ -1,7 +1,7 @@
 {
   "name": "htj2k-js",
   "version": "0.0.1",
-  "description": "Javascript High-Throughput JPEG 2000 (HTJ2K) decoder for Node.js and browser",
+  "description": "High-Throughput JPEG 2000 (HTJ2K) decoder for Node.js and browser",
   "main": "build/htj2k-js.min.js",
   "module": "build/htj2k-js.min.js",
   "types": "index.d.ts",
@@ -24,7 +24,7 @@
     "test:browser": "karma start karma.config.js",
     "test:types": "tsd",
     "test": "npm run test:types && npm run test:node && npm run test:browser",
-    "lint": "eslint -c .eslintrc.json --fix src && prettier --tab-width 2 --single-quote true --print-width 100 --use-tabs false --write src/**/*.js test/**/*.js examples/**/*.{js,ts,html} *.ts"
+    "lint": "eslint -c .eslintrc.json --fix src && prettier --tab-width 2 --single-quote true --print-width 100 --use-tabs false --trailing-comma es5 --write src/**/*.js test/**/*.js examples/**/*.{js,ts,html} *.ts"
   },
   "repository": {
     "type": "git",
@@ -32,7 +32,7 @@
   },
   "keywords": [
     "HTJ2K",
-    "High-Throughput JPEG 2000",
+    "J2K",
     "JPEG2000"
   ],
   "author": "Pantelis Georgiadis",
@@ -47,28 +47,28 @@
   },
   "devDependencies": {
     "browserify": "^17.0.0",
-    "c8": "^7.12.0",
-    "chai": "^4.3.7",
+    "c8": "^8.0.1",
+    "chai": "^4.3.8",
     "copy-webpack-plugin": "^11.0.0",
-    "docdash": "^2.0.0",
-    "eslint": "^8.29.0",
-    "jsdoc": "^4.0.0",
-    "karma": "^6.4.1",
+    "docdash": "^2.0.1",
+    "eslint": "^8.48.0",
+    "jsdoc": "^4.0.2",
+    "karma": "^6.4.2",
     "karma-browserify": "^8.1.0",
     "karma-chai": "^0.1.0",
-    "karma-chrome-launcher": "^3.1.1",
+    "karma-chrome-launcher": "^3.2.0",
     "karma-mocha": "^2.0.1",
     "karma-mocha-reporter": "^2.2.5",
-    "mocha": "^10.1.0",
-    "open-cli": "^7.1.0",
-    "prettier": "^2.8.1",
+    "mocha": "^10.2.0",
+    "open-cli": "^7.2.0",
+    "prettier": "^3.0.3",
     "shx": "^0.3.4",
     "smart-buffer": "^4.2.0",
-    "tsd": "^0.25.0",
-    "typescript": "^4.9.4",
-    "terser-webpack-plugin": "^5.3.6",
-    "webpack": "^5.75.0",
-    "webpack-cli": "^5.0.1",
-    "webpack-dev-server": "^4.11.1"
+    "tsd": "^0.28.1",
+    "typescript": "^5.2.2",
+    "terser-webpack-plugin": "^5.3.9",
+    "webpack": "^5.88.2",
+    "webpack-cli": "^5.1.4",
+    "webpack-dev-server": "^4.15.1"
   }
 }

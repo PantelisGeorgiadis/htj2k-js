@@ -1,16 +1,17 @@
-const BinaryReader = require('./BinaryReader');
 const {
-  Segment,
-  SizSegment,
   CapSegment,
   CodSegment,
-  QcdSegment,
   ComSegment,
+  QcdSegment,
+  Segment,
+  SizSegment,
   SotSegment,
+  TlmSegment,
 } = require('./Segment');
 const { Marker, ProgressionOrder } = require('./Constants');
 const { Tile, TilePart } = require('./Coding');
-const { Rectangle, Point, Size } = require('./Helpers');
+const { Point, Rectangle, Size } = require('./Helpers');
+const BinaryReader = require('./BinaryReader');
 const log = require('./log');
 
 //#region Codestream
@@ -89,6 +90,9 @@ class Codestream {
         segment.parse();
       } else if (marker === Marker.Qcd) {
         segment = new QcdSegment(position, data);
+        segment.parse();
+      } else if (marker === Marker.Tlm) {
+        segment = new TlmSegment(position, data);
         segment.parse();
       } else if (marker === Marker.Com) {
         segment = new ComSegment(position, data);

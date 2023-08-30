@@ -1,7 +1,7 @@
 [![NPM version][npm-version-image]][npm-url] [![build][build-image]][build-url] [![MIT License][license-image]][license-url] 
 
 # htj2k-js
-Javascript High-Throughput JPEG 2000 (HTJ2K) decoder for Node.js and browser.
+High-Throughput JPEG 2000 (HTJ2K) decoder for Node.js and browser.
 
 ### Install
 #### Node.js
@@ -21,6 +21,7 @@ Javascript High-Throughput JPEG 2000 (HTJ2K) decoder for Node.js and browser.
 ```js
 
 ```
+Please check a live example [here][htj2k-js-live-example-url].
 
 ### License
 htj2k-js is released under the MIT License.
@@ -33,3 +34,5 @@ htj2k-js is released under the MIT License.
 
 [license-image]: https://img.shields.io/badge/license-MIT-blue.svg?style=flat
 [license-url]: LICENSE.txt
+
+[htj2k-js-live-example-url]: https://unpkg.com/htj2k-js@latest/build/index.html

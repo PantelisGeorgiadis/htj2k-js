@@ -1,6 +1,6 @@
-const Codestream = require('./Codestream');
-const { J2kFormat, BoxType } = require('./Constants');
+const { BoxType, J2kFormat } = require('./Constants');
 const { BoxReader } = require('./Box');
+const Codestream = require('./Codestream');
 
 //#region Decoder
 class Decoder {
@@ -45,7 +45,7 @@ class Decoder {
       const boxes = boxReader.getBoxes();
       const firstCodestreamBox = boxes.find((b) => b.getType() === BoxType.CodestreamBox);
       if (!firstCodestreamBox) {
-        throw new Error('Buffer does not contain an HTJ2K codestream within a box');
+        throw new Error('Buffer does not contain a CodestreamBox');
       }
       codestreamBuffer = firstCodestreamBox.getBuffer();
     }

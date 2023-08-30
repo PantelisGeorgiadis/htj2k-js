@@ -1,4 +1,4 @@
-const { Rectangle, Point, Size } = require('./Helpers');
+const { Point, Rectangle, Size } = require('./Helpers');
 
 //#region Tile
 class Tile {
@@ -281,15 +281,15 @@ class TileComponent {
       );
 
       const precinctSize = cod.getPrecinctSize(i);
-      /*const codeblockSize = cod.getLogCodeblockSize();
-      const blockSize = new Size(
+      const logCodeblockSize = cod.getLogCodeblockSize();
+      const codeblockSize = new Size(
         i > 0
-          ? Math.min(codeblockSize.getWidth(), precinctSize.getWidth() - 1)
-          : Math.min(codeblockSize.getWidth(), precinctSize.getWidth()),
+          ? Math.min(logCodeblockSize.getWidth(), precinctSize.getWidth() - 1)
+          : Math.min(logCodeblockSize.getWidth(), precinctSize.getWidth()),
         i > 0
-          ? Math.min(codeblockSize.getHeight(), precinctSize.getHeight() - 1)
-          : Math.min(codeblockSize.getHeight(), precinctSize.getHeight())
-      );*/
+          ? Math.min(logCodeblockSize.getHeight(), precinctSize.getHeight() - 1)
+          : Math.min(logCodeblockSize.getHeight(), precinctSize.getHeight())
+      );
       const precinctWidth = 1 << precinctSize.getWidth();
       const precinctHeight = 1 << precinctSize.getHeight();
 
@@ -313,8 +313,14 @@ class TileComponent {
         numPrecinctsHigh,
         numPrecincts: numPrecinctsWide * numPrecinctsHigh,
       };
+      const codeblockParams = {
+        codeblockSize,
+        scale,
+      };
 
-      this.resolutions.push(new Resolution(index, resolutionRect, i, precinctParams));
+      this.resolutions.push(
+        new Resolution(index, resolutionRect, i, precinctParams, codeblockParams)
+      );
       index++;
     }
   }
@@ -331,13 +337,23 @@ class Resolution {
    * @param {Rectangle} resolutionRect - Resolution rectangle.
    * @param {number} decompositionLevel - Decomposition level.
    * @param {Object} precinctParams - Precinct parameters.
+   * @param {Object} codeblockParams - Codeblock parameters.
    */
-  constructor(resolutionIndex, resolutionRect, decompositionLevel, precinctParams) {
+  constructor(
+    resolutionIndex,
+    resolutionRect,
+    decompositionLevel,
+    precinctParams,
+    codeblockParams
+  ) {
     this.resolutionIndex = resolutionIndex;
     this.resolutionRect = resolutionRect;
     this.decompositionLevel = decompositionLevel;
     this.precinctParams = precinctParams;
+    this.codeblockParams = codeblockParams;
     this.subBands = [];
+
+    this._createSubBands();
   }
 
   /**
@@ -375,6 +391,30 @@ class Resolution {
   getPrecinctParameters() {
     return this.precinctParams;
   }
+
+  /**
+   * Gets codeblock parameters.
+   * @method
+   * @returns {Object} Codeblock parameters.
+   */
+  getCodeblockParameters() {
+    return this.codeblockParams;
+  }
+
+  //#region Private Methods
+  /**
+   * Create empty sub-bands.
+   * @method
+   * @private
+   */
+  _createSubBands() {
+    /*if (r === 0) {
+
+    } else {
+
+    }*/
+  }
+  //#endregion
 }
 //#endregion
 
@@ -384,7 +424,7 @@ class SubBand {
    * Creates an instance of SubBand.
    * @constructor
    * @param {number} subBandIndex - Sub-band index.
-   * @param {number} subBandType - Sub-band type.
+   * @param {SubBandType} subBandType - Sub-band type.
    * @param {Rectangle} subBandRect - Sub-band rectangle.
    */
   constructor(subBandIndex, subBandType, subBandRect) {
@@ -405,7 +445,7 @@ class SubBand {
   /**
    * Gets sub-band type.
    * @method
-   * @returns {Rectangle} sub-band type.
+   * @returns {SubBandType} Sub-band type.
    */
   getSubBandType() {
     return this.subBandType;
@@ -414,7 +454,7 @@ class SubBand {
   /**
    * Gets sub-band rectangle.
    * @method
-   * @returns {Rectangle} sub-band rectangle.
+   * @returns {Rectangle} Sub-band rectangle.
    */
   getSubBandRectangle() {
     return this.subBandRect;

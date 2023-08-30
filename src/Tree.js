@@ -229,5 +229,5 @@ class InclusionTree {
 //#endregion
 
 //#region Exports
-module.exports = { TagTree, InclusionTree };
+module.exports = { InclusionTree, TagTree };
 //#endregion

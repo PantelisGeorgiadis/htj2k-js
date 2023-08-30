@@ -10,7 +10,6 @@ documentation/
 .eslintrc.json
 .gitignore
 .jsdocrc.json
-.c8rc.json
 index.test-d.ts
 karma.config.js
 webpack.config.js

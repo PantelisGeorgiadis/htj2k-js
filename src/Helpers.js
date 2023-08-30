@@ -221,5 +221,5 @@ class Rectangle {
 //#endregion
 
 //#region Exports
-module.exports = { MathFunction, Point, Size, Rectangle };
+module.exports = { MathFunction, Point, Rectangle, Size };
 //#endregion
