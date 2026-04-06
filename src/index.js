@@ -31,8 +31,13 @@ const {
 } = require('./Constants');
 const { Resolution, SubBand, Tile, TileComponent, TilePart } = require('./Coding');
 const { Point, Rectangle, Size } = require('./Helpers');
+const { InclusionTree, TagTree } = require('./Tree');
+const BinaryReader = require('./BinaryReader');
+const BlockDecoder = require('./BlockDecoder');
 const Codestream = require('./Codestream');
 const Decoder = require('./Decoder');
+const PacketReader = require('./PacketReader');
+const Wavelet = require('./Wavelet');
 const log = require('./log');
 const version = require('./version');
 
@@ -59,11 +64,11 @@ const segments = {
 
 //#region coding
 const coding = {
-  Tile,
-  TilePart,
-  TileComponent,
   Resolution,
   SubBand,
+  Tile,
+  TileComponent,
+  TilePart,
 };
 //#endregion
 
@@ -94,12 +99,24 @@ const constants = {
 };
 //#endregion
 
+//#region tree
+const tree = {
+  InclusionTree,
+  TagTree,
+};
+//#endregion
+
 const HtJ2kJs = {
+  BinaryReader,
+  BlockDecoder,
   Decoder,
   Codestream,
+  PacketReader,
+  Wavelet,
   coding,
   boxes,
   segments,
+  tree,
   helpers,
   constants,
   log,

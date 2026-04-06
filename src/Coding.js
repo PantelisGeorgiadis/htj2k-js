@@ -1,4 +1,6 @@
 const { Point, Rectangle, Size } = require('./Helpers');
+const { SubBandType } = require('./Constants');
+const { TagTree, InclusionTree } = require('./Tree');
 
 //#region Tile
 class Tile {
@@ -250,7 +252,7 @@ class TileComponent {
   /**
    * Gets the tile component description.
    * @method
-   * @return {string} Tile component description.
+   * @returns {string} Tile component description.
    */
   toString() {
     return `Tile Component [Index: ${this.getTileComponentIndex()}, Width: ${this.getWidth()}, Height: ${this.getHeight()}, Bit depth: ${this.getBitDepth(
@@ -403,16 +405,50 @@ class Resolution {
 
   //#region Private Methods
   /**
-   * Create empty sub-bands.
+   * Create sub-bands for this resolution level.
    * @method
    * @private
    */
   _createSubBands() {
-    /*if (r === 0) {
+    const curr = this.resolutionRect;
+    const cx0 = curr.getPoint().getX();
+    const cy0 = curr.getPoint().getY();
+    const cx1 = curr.getSize().getWidth();
+    const cy1 = curr.getSize().getHeight();
 
+    if (this.decompositionLevel === 0) {
+      // Resolution 0: single LL subband, same rect as resolution
+      const llRect = new Rectangle(new Point(cx0, cy0), new Size(cx1, cy1));
+      this.subBands.push(
+        new SubBand(0, SubBandType.Ll, llRect, this.precinctParams, this.codeblockParams)
+      );
     } else {
-
-    }*/
+      // Previous (lower) resolution rect – derived via ceil(curr/2)
+      const px0 = Math.ceil(cx0 / 2);
+      const py0 = Math.ceil(cy0 / 2);
+      const px1 = Math.ceil(cx1 / 2);
+      const py1 = Math.ceil(cy1 / 2);
+      // High-pass coordinate ranges
+      const hx0 = Math.floor(cx0 / 2);
+      const hy0 = Math.floor(cy0 / 2);
+      const hx1 = Math.floor(cx1 / 2);
+      const hy1 = Math.floor(cy1 / 2);
+      // HL: high-x, low-y
+      const hlRect = new Rectangle(new Point(hx0, py0), new Size(hx1, py1));
+      // LH: low-x, high-y
+      const lhRect = new Rectangle(new Point(px0, hy0), new Size(px1, hy1));
+      // HH: high-x, high-y
+      const hhRect = new Rectangle(new Point(hx0, hy0), new Size(hx1, hy1));
+      this.subBands.push(
+        new SubBand(0, SubBandType.Hl, hlRect, this.precinctParams, this.codeblockParams)
+      );
+      this.subBands.push(
+        new SubBand(1, SubBandType.Lh, lhRect, this.precinctParams, this.codeblockParams)
+      );
+      this.subBands.push(
+        new SubBand(2, SubBandType.Hh, hhRect, this.precinctParams, this.codeblockParams)
+      );
+    }
   }
   //#endregion
 }
@@ -426,11 +462,18 @@ class SubBand {
    * @param {number} subBandIndex - Sub-band index.
    * @param {SubBandType} subBandType - Sub-band type.
    * @param {Rectangle} subBandRect - Sub-band rectangle.
+   * @param {Object} [precinctParams] - Precinct parameters.
+   * @param {Object} [codeblockParams] - Codeblock parameters.
    */
-  constructor(subBandIndex, subBandType, subBandRect) {
+  constructor(subBandIndex, subBandType, subBandRect, precinctParams, codeblockParams) {
     this.subBandIndex = subBandIndex;
     this.subBandType = subBandType;
     this.subBandRect = subBandRect;
+    this.codeblocks = [];
+    this.precincts = [];
+    if (precinctParams && codeblockParams) {
+      this._createCodeblocksAndPrecincts(precinctParams, codeblockParams);
+    }
   }
 
   /**
@@ -459,6 +502,89 @@ class SubBand {
   getSubBandRectangle() {
     return this.subBandRect;
   }
+
+  //#region Private Methods
+  /**
+   * Create codeblocks and precincts for this sub-band.
+   * @method
+   * @private
+   */
+  _createCodeblocksAndPrecincts(precinctParams, codeblockParams) {
+    const x0 = this.subBandRect.getPoint().getX();
+    const y0 = this.subBandRect.getPoint().getY();
+    const x1 = this.subBandRect.getSize().getWidth();
+    const y1 = this.subBandRect.getSize().getHeight();
+    if (x1 <= x0 || y1 <= y0) return;
+
+    const { precinctWidthInSubBand, precinctHeightInSubBand, numPrecinctsWide, numPrecinctsHigh } =
+      precinctParams;
+    const cbLogW = codeblockParams.codeblockSize.getWidth();
+    const cbLogH = codeblockParams.codeblockSize.getHeight();
+    const cbW = 1 << cbLogW;
+    const cbH = 1 << cbLogH;
+
+    const cbGridX0 = Math.floor(x0 / cbW);
+    const cbGridY0 = Math.floor(y0 / cbH);
+    const cbGridX1 = Math.ceil(x1 / cbW);
+    const cbGridY1 = Math.ceil(y1 / cbH);
+    const totalCbsWide = Math.max(0, cbGridX1 - cbGridX0);
+    const totalCbsHigh = Math.max(0, cbGridY1 - cbGridY0);
+
+    this.cbGridX0 = cbGridX0;
+    this.cbGridY0 = cbGridY0;
+    this.totalCbsWide = totalCbsWide;
+    this.totalCbsHigh = totalCbsHigh;
+
+    for (let cby = 0; cby < totalCbsHigh; cby++) {
+      for (let cbx = 0; cbx < totalCbsWide; cbx++) {
+        const cbx0 = Math.max((cbGridX0 + cbx) * cbW, x0);
+        const cby0 = Math.max((cbGridY0 + cby) * cbH, y0);
+        const cbx1 = Math.min((cbGridX0 + cbx + 1) * cbW, x1);
+        const cby1 = Math.min((cbGridY0 + cby + 1) * cbH, y1);
+        this.codeblocks.push({
+          cbx0,
+          cby0,
+          cbx1,
+          cby1,
+          cbGridX: cbx,
+          cbGridY: cby,
+          passes: 0,
+          lengths1: 0,
+          lengths2: 0,
+          missingMSBs: 0,
+          data: null,
+          coeffs: null,
+        });
+      }
+    }
+
+    // Convert precinct size from subband-sample units to codeblock-grid units
+    const precCbsW = precinctWidthInSubBand >> cbLogW;
+    const precCbsH = precinctHeightInSubBand >> cbLogH;
+
+    for (let py = 0; py < numPrecinctsHigh; py++) {
+      for (let px = 0; px < numPrecinctsWide; px++) {
+        const cbOffX = px * precCbsW;
+        const cbOffY = py * precCbsH;
+        const cbsW = Math.min(precCbsW, totalCbsWide - cbOffX);
+        const cbsH = Math.min(precCbsH, totalCbsHigh - cbOffY);
+        if (cbsW > 0 && cbsH > 0) {
+          this.precincts.push({
+            px,
+            py,
+            cbOffX,
+            cbOffY,
+            cbsW,
+            cbsH,
+            inclusionTree: new InclusionTree(cbsW, cbsH),
+            zeroBitTree: new TagTree(cbsW, cbsH),
+            included: new Uint8Array(cbsW * cbsH),
+          });
+        }
+      }
+    }
+  }
+  //#endregion
 }
 //#endregion
 

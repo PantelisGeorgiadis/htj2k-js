@@ -153,7 +153,7 @@ class FileTypeBox extends Box {
   /**
    * Gets the box description.
    * @method
-   * @return {string} Box description.
+   * @returns {string} Box description.
    */
   toString() {
     return `${super.toString()} [Brand: 0x${this.getBrand().toString(
@@ -189,9 +189,9 @@ class Jp2SignatureBox extends Box {
   }
 
   /**
-   * Gets the brand.
+   * Checks if the signature is valid.
    * @method
-   * @returns {boolean} The brand.
+   * @returns {boolean} True if the signature is valid, false otherwise.
    */
   isSignatureValid() {
     return this.signature === 0x0d0a870a;
@@ -209,7 +209,7 @@ class Jp2SignatureBox extends Box {
   /**
    * Gets the box description.
    * @method
-   * @return {string} Box description.
+   * @returns {string} Box description.
    */
   toString() {
     return `${super.toString()} [Signature: 0x${this.getSignature().toString(
@@ -330,7 +330,7 @@ class ImageHeaderBox extends Box {
   /**
    * Gets the box description.
    * @method
-   * @return {string} Box description.
+   * @returns {string} Box description.
    */
   toString() {
     return `${super.toString()} [Width: ${this.getWidth()}, Height: ${this.getHeight()}, Bit depth: ${this.getBitDepth()}, Signed: ${this.isSigned()}, Components: ${this.getComponents()}]`;
@@ -424,7 +424,7 @@ class ColorSpecificationBox extends Box {
   /**
    * Gets the box description.
    * @method
-   * @return {string} Box description.
+   * @returns {string} Box description.
    */
   toString() {
     return `${super.toString()} [Method: ${this.getMethod()}, Precedence: ${this.getPrecedence()}, Approximation: ${this.getApproximationAccuracy()}, Enumerated color space: ${
@@ -471,7 +471,7 @@ class XmlBox extends Box {
   /**
    * Gets the box description.
    * @method
-   * @return {string} Box description.
+   * @returns {string} Box description.
    */
   toString() {
     return `${super.toString()} [Xml: ${this.getXml()}]`;
@@ -538,7 +538,7 @@ class UrlBox extends Box {
   /**
    * Gets the box description.
    * @method
-   * @return {string} Box description.
+   * @returns {string} Box description.
    */
   toString() {
     return `${super.toString()} [Version: ${this.getVersion()}, Flags: ${this.getFlags()}, Url: ${this.getUrl()}]`;

@@ -346,7 +346,7 @@ class SizSegment extends Segment {
   /**
    * Gets the segment description.
    * @method
-   * @return {string} Segment description.
+   * @returns {string} Segment description.
    */
   toString() {
     return `${super.toString()} [Width: ${this.getWidth(0)}, Height: ${this.getHeight(
@@ -411,7 +411,7 @@ class CapSegment extends Segment {
   /**
    * Gets the segment description.
    * @method
-   * @return {string} Segment description.
+   * @returns {string} Segment description.
    */
   toString() {
     return `${super.toString()} [Capabilities: ${(this.getCapabilities() >>> 0).toString(2)}]`;
@@ -506,6 +506,16 @@ class CodSegment extends Segment {
    */
   getProgressionOrder() {
     return this.progressionOrder;
+  }
+
+  /**
+   * Gets the number of quality layers.
+   * Always one for HTJ2K.
+   * @method
+   * @returns {number} The number of quality layers.
+   */
+  getQualityLayers() {
+    return this.qualityLayers;
   }
 
   /**
@@ -657,7 +667,7 @@ class CodSegment extends Segment {
   /**
    * Gets the segment description.
    * @method
-   * @return {string} Segment description.
+   * @returns {string} Segment description.
    */
   toString() {
     return `${super.toString()} [Progression order: ${Object.keys(ProgressionOrder)[
@@ -745,7 +755,7 @@ class QcdSegment extends Segment {
   /**
    * Gets the segment description.
    * @method
-   * @return {string} Segment description.
+   * @returns {string} Segment description.
    */
   toString() {
     return `${super.toString()} [Decomposition levels: ${this.getDecompositionLevels()}, Quantization style: 0x${this.getQuantizationStyle().toString(
@@ -833,7 +843,7 @@ class SotSegment extends Segment {
   /**
    * Gets the segment description.
    * @method
-   * @return {string} Segment description.
+   * @returns {string} Segment description.
    */
   toString() {
     return `${super.toString()} [Tile index: ${this.getTileIndex()}, Tile part length: ${this.getTilePartLength()}, Tile part index: ${this.getTilePartIndex()}, Tile part count: ${this.getTilePartCount()}]`;
@@ -964,7 +974,7 @@ class TlmSegment extends Segment {
   /**
    * Gets the segment description.
    * @method
-   * @return {string} Segment description.
+   * @returns {string} Segment description.
    */
   toString() {
     return `${super.toString()} [Ltlm: ${this.getLtlm()}, Ztlm: ${this.getZtlm()}, Stlm: ${this.getStlm()}, Ttlm: ${this.getTtlm().join(', ')}, Ptlm: ${this.getPtlm().join(', ')}]`;
@@ -1021,7 +1031,7 @@ class ComSegment extends Segment {
   /**
    * Gets the segment description.
    * @method
-   * @return {string} Segment description.
+   * @returns {string} Segment description.
    */
   toString() {
     return `${super.toString()} [Registration: ${this.getRegistration()}, Comment: ${
