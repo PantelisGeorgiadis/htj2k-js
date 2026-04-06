@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
   <head>
     <title>htj2k-js rendering example</title>
@@ -38,7 +38,7 @@
       </div>
     </div>
   </body>
-  <script type="text/javascript" src="../build/htj2k-js.min.js"></script>
+  <script type="text/javascript" src="htj2k-js.min.js"></script>
   <script>
     const { Decoder } = window.htj2kJs;
 
@@ -71,17 +71,18 @@
     function render(opts) {
       opts.canvasElement.width = opts.header.width;
       opts.canvasElement.height = opts.header.height;
+      opts.infoTextElement.innerHTML = '';
 
       try {
         const t0 = performance.now();
 
-        const decodingResult = opts.htj2kd.decode();
-        const renderedPixels = new Uint8Array(decodingResult.pixels);
+        const decodingResult = opts.htj2kd.decodeAndRenderToRgba();
+        const renderedPixels = decodingResult.data;
 
         const t1 = performance.now();
 
         const ctx = opts.canvasElement.getContext('2d');
-        tx.clearRect(0, 0, opts.canvasElement.width, opts.canvasElement.height);
+        ctx.clearRect(0, 0, opts.canvasElement.width, opts.canvasElement.height);
         const imageData = ctx.createImageData(opts.header.width, opts.header.height);
         const canvasPixels = imageData.data;
         for (let i = 0; i < 4 * opts.header.width * opts.header.height; i++) {

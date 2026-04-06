@@ -1,6 +1,6 @@
-const Codestream = require('./Codestream');
-const { J2kFormat, BoxType } = require('./Constants');
+const { BoxType, J2kFormat } = require('./Constants');
 const { BoxReader } = require('./Box');
+const Codestream = require('./Codestream');
 
 //#region Decoder
 class Decoder {
@@ -45,7 +45,7 @@ class Decoder {
       const boxes = boxReader.getBoxes();
       const firstCodestreamBox = boxes.find((b) => b.getType() === BoxType.CodestreamBox);
       if (!firstCodestreamBox) {
-        throw new Error('Buffer does not contain an HTJ2K codestream within a box');
+        throw new Error('Buffer does not contain a CodestreamBox');
       }
       codestreamBuffer = firstCodestreamBox.getBuffer();
     }
@@ -55,16 +55,70 @@ class Decoder {
   }
 
   /**
-   * Performs decoding.
+   * Performs decoding and rendering.
    * @method
-   * @param {Object} [opts] - Decoding options.
+   * @param {Object} [opts] - Decoding and rendering options.
+   * @returns {Object|null} result Decoded and rendered image data and metadata, or null if decoding fails.
+   * @returns {Array<Int16Array|Uint16Array|Uint8Array>} result.components rendered components.
+   * @returns {number} result.width width.
+   * @returns {number} result.height height.
+   * @returns {number} result.bitDepth bitDepth.
+   * @returns {boolean} result.signed signed.
    */
-  decode(opts) {
+  decodeAndRender(opts) {
     if (!this.codestream) {
       this.readHeader();
     }
 
-    this.codestream.decode(opts);
+    return this.codestream.decode(opts);
+  }
+
+  /**
+   * Performs decoding and rendering to RGBA format.
+   * @method
+   * @param {Object} [opts] - Decoding and rendering options.
+   * @returns {Object|null} result Decoded and rendered image data and metadata, or null if decoding fails.
+   * @returns {Uint8Array} result.data RGBA image data.
+   * @returns {number} result.width width.
+   * @returns {number} result.height height.
+   * @returns {number} result.bitDepth bitDepth.
+   * @returns {boolean} result.signed signed.
+   */
+  decodeAndRenderToRgba(opts) {
+    const { width, height, components, bitDepth, signed } = this.decodeAndRender(opts);
+    const numComponents = components.length;
+    const clamp = (v) => {
+      if (bitDepth <= 8) {
+        return Math.max(0, Math.min(255, v));
+      }
+      const shifted = signed ? v + (1 << (bitDepth - 1)) : v;
+      return Math.max(0, Math.min(255, shifted >> (bitDepth - 8)));
+    };
+    const rgba = new Uint8Array(width * height * 4);
+    for (let i = 0; i < width * height; i++) {
+      let r, g, b, a;
+      if (numComponents === 1) {
+        r = g = b = clamp(components[0][i]);
+        a = 255;
+      } else {
+        r = numComponents > 0 ? clamp(components[0][i]) : 0;
+        g = numComponents > 1 ? clamp(components[1][i]) : 0;
+        b = numComponents > 2 ? clamp(components[2][i]) : 0;
+        a = numComponents > 3 ? clamp(components[3][i]) : 255;
+      }
+      rgba[i * 4] = r;
+      rgba[i * 4 + 1] = g;
+      rgba[i * 4 + 2] = b;
+      rgba[i * 4 + 3] = a;
+    }
+
+    return {
+      width,
+      height,
+      bitDepth,
+      signed,
+      data: rgba,
+    };
   }
 
   //#region Private Methods
