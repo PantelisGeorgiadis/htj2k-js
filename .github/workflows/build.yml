@@ -30,4 +30,4 @@ jobs:
       - name: Build
         run: npm run build
       - name: Perform CodeQL analysis
-        uses: github/codeql-action/analyze@v2
+        uses: github/codeql-action/analyze@v4
