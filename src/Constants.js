@@ -19,8 +19,9 @@ Object.freeze(J2kFormat);
 const BoxType = {
   Undefined: 0x0,
   Jp2SignatureBox: 0x6a502020,
+
   FileTypeBox: 0x66747970,
-  Jp2HeaderBox: 0x6a703268,
+  JP2HeaderBox: 0x6a703268,
   ImageHeaderBox: 0x69686472,
   BitsPerCompBox: 0x62706363,
   ColorSpecBox: 0x636f6c72,
@@ -35,23 +36,10 @@ const BoxType = {
   XmlBox: 0x786d6c20,
   UuidBox: 0x75756964,
   UuidInfoBox: 0x75696e66,
-  UuidListBox: 0x756c7374,
+  UuidListBox: 0x75637374,
   UrlBox: 0x75726c20,
 };
 Object.freeze(BoxType);
-//#endregion
-
-//#region EnumeratedColorSpace
-/**
- * Jpeg2000 enumerated color spaces.
- * @constant {Object}
- */
-const EnumeratedColorSpace = {
-  sRgb: 16,
-  Gray: 17,
-  Ycc: 18,
-};
-Object.freeze(EnumeratedColorSpace);
 //#endregion
 
 //#region Marker
@@ -77,6 +65,7 @@ const Marker = {
   Eph: 0x92, // End of packet
   Sod: 0x93, // Start of data
   Eoc: 0xd9, // End of codestream (required)
+
   Coc: 0x53, // Coding style component
   Rgn: 0x5e, // Region of interest
   Poc: 0x5f, // Progression order change
@@ -150,30 +139,14 @@ const WaveletTransform = {
 Object.freeze(WaveletTransform);
 //#endregion
 
-//#region SubBandType
-/**
- * SubBand types.
- * @constant {Object}
- */
-const SubBandType = {
-  Ll: 'LL',
-  Hl: 'HL',
-  Lh: 'LH',
-  Hh: 'HH',
-};
-Object.freeze(SubBandType);
-//#endregion
-
 //#region Exports
 module.exports = {
   BoxType,
-  CodeblockStyle,
-  CodingStyle,
-  EnumeratedColorSpace,
   J2kFormat,
   Marker,
   ProgressionOrder,
-  SubBandType,
+  CodingStyle,
+  CodeblockStyle,
   WaveletTransform,
 };
 //#endregion

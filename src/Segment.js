@@ -1,12 +1,12 @@
+const BinaryReader = require('./BinaryReader');
 const {
-  CodeblockStyle,
-  CodingStyle,
   Marker,
+  CodingStyle,
   ProgressionOrder,
+  CodeblockStyle,
   WaveletTransform,
 } = require('./Constants');
 const { MathFunction, Point, Size } = require('./Helpers');
-const BinaryReader = require('./BinaryReader');
 
 //#region Segment
 class Segment {
@@ -191,7 +191,7 @@ class SizSegment extends Segment {
    * Gets signedness for a component.
    * @method
    * @param {number} component - Component.
-   * @returns {boolean} The signedness.
+   * @returns {number} The signedness.
    * @throws Error if requested component is out of range.
    */
   isSigned(component) {
@@ -203,7 +203,7 @@ class SizSegment extends Segment {
   }
 
   /**
-   * Gets sub-sampling X for a component.
+   * Gets sub-sampling X a component.
    * @method
    * @param {number} component - Component.
    * @returns {number} The sub-sampling X.
@@ -218,7 +218,7 @@ class SizSegment extends Segment {
   }
 
   /**
-   * Gets sub-sampling Y for a component.
+   * Gets sub-sampling Y a component.
    * @method
    * @param {number} component - Component.
    * @returns {number} The sub-sampling Y.
@@ -252,6 +252,21 @@ class SizSegment extends Segment {
   }
 
   /**
+   * Gets number of tiles.
+   * @method
+   * @returns {Size} The width.
+   */
+  getNumberOfTiles() {
+    const w = this.getRefGridSize().getWidth() - this.getTileOffset().getX();
+    const h = this.getRefGridSize().getHeight() - this.getTileOffset().getY();
+
+    return new Size(
+      MathFunction.divCeil(w, this.getTileSize().getWidth()),
+      MathFunction.divCeil(h, this.getTileSize().getHeight())
+    );
+  }
+
+  /**
    * Gets height for a component.
    * @method
    * @param {number} component - Component.
@@ -267,21 +282,6 @@ class SizSegment extends Segment {
     return (
       MathFunction.divCeil(this.getRefGridSize().getHeight(), ds) -
       MathFunction.divCeil(this.getImageOffset().getY(), ds)
-    );
-  }
-
-  /**
-   * Gets number of tiles.
-   * @method
-   * @returns {Size} The number of tiles.
-   */
-  getNumberOfTiles() {
-    const w = this.getRefGridSize().getWidth() - this.getTileOffset().getX();
-    const h = this.getRefGridSize().getHeight() - this.getTileOffset().getY();
-
-    return new Size(
-      MathFunction.divCeil(w, this.getTileSize().getWidth()),
-      MathFunction.divCeil(h, this.getTileSize().getHeight())
     );
   }
 
@@ -346,7 +346,7 @@ class SizSegment extends Segment {
   /**
    * Gets the segment description.
    * @method
-   * @returns {string} Segment description.
+   * @return {string} Segment description.
    */
   toString() {
     return `${super.toString()} [Width: ${this.getWidth(0)}, Height: ${this.getHeight(
@@ -411,7 +411,7 @@ class CapSegment extends Segment {
   /**
    * Gets the segment description.
    * @method
-   * @returns {string} Segment description.
+   * @return {string} Segment description.
    */
   toString() {
     return `${super.toString()} [Capabilities: ${(this.getCapabilities() >>> 0).toString(2)}]`;
@@ -509,16 +509,6 @@ class CodSegment extends Segment {
   }
 
   /**
-   * Gets the number of quality layers.
-   * Always one for HTJ2K.
-   * @method
-   * @returns {number} The number of quality layers.
-   */
-  getQualityLayers() {
-    return this.qualityLayers;
-  }
-
-  /**
    * Gets whether color transform is employed.
    * @method
    * @returns {boolean} Flag indicating whether color transform is employed.
@@ -537,22 +527,15 @@ class CodSegment extends Segment {
   }
 
   /**
-   * Gets codeblock size.
+   * Gets codeblock width.
    * @method
-   * @returns {Size} The codeblock size.
+   * @returns {number} The codeblock width.
    */
   getCodeblockSize() {
     return new Size(1 << (this.codeblockExpnX + 2), 1 << (this.codeblockExpnY + 2));
   }
 
-  /**
-   * Gets log codeblock size.
-   * @method
-   * @returns {Size} The log codeblock size.
-   */
-  getLogCodeblockSize() {
-    return new Size(this.codeblockExpnX + 2, this.codeblockExpnY + 2);
-  }
+  // TODO: get_log_precinct_size, get_precinct_size, packets_may_use_sop, packets_use_eph
 
   /**
    * Gets codeblock style.
@@ -579,21 +562,6 @@ class CodSegment extends Segment {
    */
   isReversible() {
     return this.waveletFilter === WaveletTransform.Reversible_5_3;
-  }
-
-  /**
-   * Gets precinct size for a decomposition level.
-   * @method
-   * @param {number} level - Decomposition level.
-   * @returns {Size} The precinct size.
-   * @throws Error if requested level is out of range.
-   */
-  getPrecinctSize(level) {
-    if (level > this.getDecompositionLevels()) {
-      throw new Error(`Requested precinct is out of range [${level}]`);
-    }
-
-    return new Size(this.precinctSizeX[level], this.precinctSizeY[level]);
   }
 
   /**
@@ -667,7 +635,7 @@ class CodSegment extends Segment {
   /**
    * Gets the segment description.
    * @method
-   * @returns {string} Segment description.
+   * @return {string} Segment description.
    */
   toString() {
     return `${super.toString()} [Progression order: ${Object.keys(ProgressionOrder)[
@@ -755,7 +723,7 @@ class QcdSegment extends Segment {
   /**
    * Gets the segment description.
    * @method
-   * @returns {string} Segment description.
+   * @return {string} Segment description.
    */
   toString() {
     return `${super.toString()} [Decomposition levels: ${this.getDecompositionLevels()}, Quantization style: 0x${this.getQuantizationStyle().toString(
@@ -843,141 +811,10 @@ class SotSegment extends Segment {
   /**
    * Gets the segment description.
    * @method
-   * @returns {string} Segment description.
+   * @return {string} Segment description.
    */
   toString() {
     return `${super.toString()} [Tile index: ${this.getTileIndex()}, Tile part length: ${this.getTilePartLength()}, Tile part index: ${this.getTilePartIndex()}, Tile part count: ${this.getTilePartCount()}]`;
-  }
-}
-//#endregion
-
-//#region TlmSegment
-class TlmSegment extends Segment {
-  /**
-   * Creates an instance of TlmSegment.
-   * @constructor
-   * @param {number} position - Segment position in codestream.
-   * @param {ArrayBuffer} buffer - Segment buffer.
-   */
-  constructor(position, buffer) {
-    super(Marker.Tlm, position, buffer);
-
-    this.ltlm = undefined;
-    this.ztlm = undefined;
-    this.stlm = undefined;
-    this.ttlm = [];
-    this.ptlm = [];
-  }
-
-  /**
-   * Gets Length of marker segment in bytes.
-   * @method
-   * @returns {number} Length of marker segment in bytes (not including the marker).
-   */
-  getLtlm() {
-    return this.ltlm;
-  }
-
-  /**
-   * Gets TLM marker segment index relative to any others in the header.
-   * @method
-   * @returns {number} TLM marker index.
-   */
-  getZtlm() {
-    return this.ztlm;
-  }
-
-  /**
-   * Gets TLM marker size of Ttlm and Ptlm parameters.
-   * @method
-   * @returns {number} TLM marker size.
-   */
-  getStlm() {
-    return this.stlm;
-  }
-
-  /**
-   * Gets array of Ttlm values. Tile number of the ith tile-part. Either none or
-   * one value for every tile-part. The number of tile-parts can
-   * be derived from the length of this marker segment or from a non-zero TNsot
-   * parameter, if present.
-   * @method
-   * @returns {number} Array of tile numbers for tile-parts, if more than one
-   * tile-part per tile.
-   */
-  getTtlm() {
-    return this.ttlm;
-  }
-
-  /**
-   * Gets array of Ptlm values. Length, in bytes, from the beginning of the SOT
-   * marker of the ith tile-part to the end of the data for that
-   * tile-part. One value for every tile-part. The number of tile-parts can be
-   * derived from the length of this marker segment.
-   * @method
-   * @returns {Array<number>} Array of tile-part lengths from beginning of SOT marker.
-   */
-  getPtlm() {
-    return this.ptlm;
-  }
-
-  /**
-   * Parses the segment.
-   * @method
-   */
-  parse() {
-    const binaryReader = new BinaryReader(this.getBuffer(), false);
-
-    this.ltlm = this.getLength();
-    this.ztlm = binaryReader.readUint8();
-    this.stlm = binaryReader.readUint8();
-
-    const stlmTable = {
-      0: { st: 0, sp: 0 },
-      16: { st: 1, sp: 0 },
-      32: { st: 2, sp: 0 },
-      64: { st: 0, sp: 1 },
-      80: { st: 1, sp: 1 },
-      96: { st: 2, sp: 1 },
-    };
-
-    const { st, sp } = stlmTable[this.stlm];
-    if (st === undefined) {
-      throw new Error('Undefined Stlm value');
-    }
-    const lengthOfTlmParams = binaryReader.length() - binaryReader.position();
-
-    const TtlmBits = st === 0 ? 0 : st === 1 ? 8 : 16;
-    const PtlmBits = sp === 0 ? 16 : 32;
-    const numTiles = lengthOfTlmParams / ((TtlmBits + PtlmBits) / 8);
-
-    for (let i = 0; i < numTiles; i += 1) {
-      if (st > 0) {
-        if (TtlmBits === 8) {
-          this.ttlm.push(binaryReader.readUint8());
-        } else if (TtlmBits === 16) {
-          this.ttlm.push(binaryReader.readUint16());
-        } else {
-          throw new Error('Stlm value out of range');
-        }
-      }
-      if (PtlmBits === 16) {
-        this.ptlm.push(binaryReader.readUint16());
-      } else if (PtlmBits === 32) {
-        this.ptlm.push(binaryReader.readUint32());
-      } else {
-        throw new Error('Ptlm value out of range');
-      }
-    }
-  }
-
-  /**
-   * Gets the segment description.
-   * @method
-   * @returns {string} Segment description.
-   */
-  toString() {
-    return `${super.toString()} [Ltlm: ${this.getLtlm()}, Ztlm: ${this.getZtlm()}, Stlm: ${this.getStlm()}, Ttlm: ${this.getTtlm().join(', ')}, Ptlm: ${this.getPtlm().join(', ')}]`;
   }
 }
 //#endregion
@@ -1031,7 +868,7 @@ class ComSegment extends Segment {
   /**
    * Gets the segment description.
    * @method
-   * @returns {string} Segment description.
+   * @return {string} Segment description.
    */
   toString() {
     return `${super.toString()} [Registration: ${this.getRegistration()}, Comment: ${
@@ -1041,15 +878,148 @@ class ComSegment extends Segment {
 }
 //#endregion
 
+//#region TlmSegment
+class TlmSegment extends Segment {
+  /**
+   * Creates an instance of TlmSegment.
+   * @constructor
+   * @param {number} position - Segment position in codestream.
+   * @param {ArrayBuffer} buffer - Segment buffer.
+   */
+  constructor(position, buffer) {
+    super(Marker.Tlm, position, buffer);
+
+    this.Ltlm = undefined;
+    this.Ztlm = undefined;
+    this.Stlm = undefined;
+    this.Ttlm = [];
+    this.Ptlm = [];
+  }
+
+  /**
+   * Gets Length of marker segment in bytes.
+   * @method
+   * @returns {number} Length of marker segment in bytes (not including the marker)..
+   */
+  getLtlm() {
+    return this.Ltlm;
+  }
+
+  /**
+   * Gets TLM marker segment index relative to any others in the header.
+   * @method
+   * @returns {string} TLM marker index.
+   */
+  getZtlm() {
+    return this.Ztlm;
+  }
+
+  /**
+   * Gets TLM marker size of Ttlm and Ptlm parameters.
+   * @method
+   * @returns {string} TLM marker index.
+   */
+  getStlm() {
+    return this.Stlm;
+  }
+
+  /**
+   * Gets array of Ttlm values. Tile number of the ith tile-part. Either none or
+   * one value for every tile-part. The number of tile-parts can
+   * be derived from the length of this marker segment or from a non-zero TNsot
+   * parameter, if present.
+   * @method
+   * @returns {string} Array of tile numbers for tile-parts, if more than one
+   * tile-part per tile.
+   */
+  getTtlm() {
+    return this.Ttlm;
+  }
+
+  /**
+   * Gets array of Ptlm values. Length, in bytes, from the beginning of the SOT
+   * marker of the ith tile-part to the end of the data for that
+   * tile-part. One value for every tile-part. The number of tile-parts can be
+   * derived from the length of this marker segment.
+   * @method
+   * @returns {string} Array of tile-part lengths from beginning of SOT marker.
+   */
+  getPtlm() {
+    return this.Ptlm;
+  }
+
+  /**
+   * Parses the segment.
+   * @method
+   */
+  parse() {
+    const binaryReader = new BinaryReader(this.getBuffer(), false);
+
+    // this.Ltlm = binaryReader.readUint16();
+    this.Ltlm = this.getLength();
+    this.Ztlm = binaryReader.readUint8();
+    this.Stlm = binaryReader.readUint8();
+
+    const StlmTable = {
+      0: {st: 0, sp: 0},
+      16: {st: 1, sp: 0},
+      32: {st: 2, sp: 0},
+      64: {st: 0, sp: 1},
+      80: {st: 1, sp: 1},
+      96: {st: 2, sp: 1},
+    }
+
+    const {st, sp} = StlmTable[this.Stlm];
+    if (st === undefined) {
+      throw new Error('Undefined Stlm value');
+    }
+    const lengthOfTlmParams = binaryReader.length() - binaryReader.position();
+
+    const TtlmBits = st === 0 ? 0 : st === 1 ? 8 : 16;
+    const PtlmBits = sp === 0 ? 16 : 32;
+    const numTiles = lengthOfTlmParams / ((TtlmBits + PtlmBits) / 8);
+
+    for (let i = 0; i < numTiles; i += 1) {
+      if (st > 0) {
+        if (TtlmBits === 8) {
+          this.Ttlm.push(binaryReader.readUint8());
+        } else if (TtlmBits === 16) {
+          this.Ttlm.push(binaryReader.readUint16());
+        } else {
+          throw new Error('Stlm value out of range');
+        }
+      }
+      if (PtlmBits === 16) {
+        console.log('read at position:', binaryReader.position())
+        this.Ptlm.push(binaryReader.readUint16());
+      } else if (PtlmBits === 32) {
+        this.Ptlm.push(binaryReader.readUint32());
+      } else {
+        throw new Error('Ptlm value out of range');
+      }
+    }
+  }
+
+  /**
+   * Gets the segment description.
+   * @method
+   * @return {string} Segment description.
+   */
+  toString() {
+    return `${super.toString()} [Ltlm: ${this.getLtlm()}, Ztlm: ${this.getZtlm()}, Stlm: ${this.getStlm()}, Ttlm: ${this.getTtlm()}, Ptlm: ${this.getPtlm()}]`;
+  }
+}
+//#endregion
+
 //#region Exports
 module.exports = {
-  CapSegment,
-  CodSegment,
-  ComSegment,
-  QcdSegment,
   Segment,
   SizSegment,
+  CapSegment,
+  CodSegment,
+  QcdSegment,
+  ComSegment,
   SotSegment,
-  TlmSegment,
+  TlmSegment
 };
 //#endregion

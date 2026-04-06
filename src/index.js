@@ -1,43 +1,26 @@
+const Codestream = require('./Codestream');
+const Decoder = require('./Decoder');
 const {
-  CapSegment,
-  CodSegment,
-  ComSegment,
-  QcdSegment,
   Segment,
   SizSegment,
+  CapSegment,
+  CodSegment,
+  QcdSegment,
+  ComSegment,
   SotSegment,
   TlmSegment,
 } = require('./Segment');
+const { Box, BoxReader } = require('./Box');
 const {
-  Box,
-  BoxReader,
-  ColorSpecificationBox,
-  FileTypeBox,
-  ImageHeaderBox,
-  Jp2SignatureBox,
-  UrlBox,
-  XmlBox,
-} = require('./Box');
-const {
-  BoxType,
-  CodeblockStyle,
-  CodingStyle,
-  EnumeratedColorSpace,
   J2kFormat,
   Marker,
   ProgressionOrder,
-  SubBandType,
+  CodingStyle,
+  CodeblockStyle,
   WaveletTransform,
 } = require('./Constants');
-const { Resolution, SubBand, Tile, TileComponent, TilePart } = require('./Coding');
-const { Point, Rectangle, Size } = require('./Helpers');
-const { InclusionTree, TagTree } = require('./Tree');
-const BinaryReader = require('./BinaryReader');
-const BlockDecoder = require('./BlockDecoder');
-const Codestream = require('./Codestream');
-const Decoder = require('./Decoder');
-const PacketReader = require('./PacketReader');
-const Wavelet = require('./Wavelet');
+const Tile = require('./Tile');
+const { Point, Size } = require('./Helpers');
 const log = require('./log');
 const version = require('./version');
 
@@ -45,30 +28,19 @@ const version = require('./version');
 const helpers = {
   Point,
   Size,
-  Rectangle,
 };
 //#endregion
 
 //#region segments
 const segments = {
-  CapSegment,
-  CodSegment,
-  ComSegment,
-  QcdSegment,
   Segment,
   SizSegment,
+  CapSegment,
+  CodSegment,
+  QcdSegment,
+  ComSegment,
   SotSegment,
   TlmSegment,
-};
-//#endregion
-
-//#region coding
-const coding = {
-  Resolution,
-  SubBand,
-  Tile,
-  TileComponent,
-  TilePart,
 };
 //#endregion
 
@@ -76,47 +48,26 @@ const coding = {
 const boxes = {
   Box,
   BoxReader,
-  ColorSpecificationBox,
-  FileTypeBox,
-  ImageHeaderBox,
-  Jp2SignatureBox,
-  UrlBox,
-  XmlBox,
 };
 //#endregion
 
 //#region constants
 const constants = {
-  BoxType,
-  CodeblockStyle,
-  CodingStyle,
-  EnumeratedColorSpace,
   J2kFormat,
   Marker,
   ProgressionOrder,
-  SubBandType,
+  CodingStyle,
+  CodeblockStyle,
   WaveletTransform,
 };
 //#endregion
 
-//#region tree
-const tree = {
-  InclusionTree,
-  TagTree,
-};
-//#endregion
-
 const HtJ2kJs = {
-  BinaryReader,
-  BlockDecoder,
   Decoder,
   Codestream,
-  PacketReader,
-  Wavelet,
-  coding,
+  Tile,
   boxes,
   segments,
-  tree,
   helpers,
   constants,
   log,

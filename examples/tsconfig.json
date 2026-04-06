@@ -1,9 +1,0 @@
-{
-  "ts-node": {
-    "compilerOptions": {
-      "esModuleInterop": true,
-      "module": "commonjs",
-      "target": "es2021"
-    }
-  }
-}

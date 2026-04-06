@@ -1,0 +1,23 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "node",
+            "request": "launch",
+            "name": "Launch Program",
+            "skipFiles": [
+                "<node_internals>/**"
+            ],
+            "program": "${workspaceFolder}/examples/index.js"
+        },
+        {
+            "type": "node",
+            "name": "Run Tests",
+            "stopOnEntry": false,
+            "args": ["${workspaceFolder}\\test\\BinaryReader.test.js"],
+            "cwd": ".",
+            "runtimeExecutable": null,
+            "program": "${workspaceRoot}\\node_modules\\mocha\\bin\\_mocha",
+        }
+    ]
+}

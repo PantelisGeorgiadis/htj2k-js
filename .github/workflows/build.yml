@@ -1,4 +1,4 @@
-name: Node.js CI
+name: build
 
 on:
   push:
@@ -6,33 +6,16 @@ on:
   pull_request:
     branches: [ master ]
 
-permissions:
-  actions: read
-  contents: read
-  security-events: write    
-
 jobs:
   build:
     runs-on: ubuntu-latest
-
-    strategy:
-      matrix:
-        node-version: [14.x, 16.x, 18.x, 20.x, 22.x, 24.x]
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-      - name: Initialize CodeQL
-        uses: github/codeql-action/init@v4
-        with:
-          languages: javascript
-      - name: Use Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v6
-        with:
-          node-version: ${{ matrix.node-version }}
-      - name: Install dependencies
-        run: npm install
-      - name: Build
-        run: npm run build
-      - name: Perform CodeQL analysis
-        uses: github/codeql-action/analyze@v4
+    - uses: actions/checkout@v2
+    - name: Use Node.js
+      uses: actions/setup-node@v1
+      with:
+        node-version: '14.x'
+    - name: Install dependencies
+      run: npm install
+    - name: Build
+      run: npm run build
