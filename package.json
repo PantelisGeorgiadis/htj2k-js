@@ -1,6 +1,6 @@
 {
   "name": "htj2k-js",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "High-Throughput JPEG 2000 (HTJ2K) decoder for Node.js and browser",
   "main": "build/htj2k-js.min.js",
   "module": "build/htj2k-js.min.js",
