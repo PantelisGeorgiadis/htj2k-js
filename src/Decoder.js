@@ -87,29 +87,46 @@ class Decoder {
   decodeAndRenderToRgba(opts) {
     const { width, height, components, bitDepth, signed } = this.decodeAndRender(opts);
     const numComponents = components.length;
-    const clamp = (v) => {
-      if (bitDepth <= 8) {
-        return Math.max(0, Math.min(255, v));
+    const pixelCount = width * height;
+    const rgba = new Uint8Array(pixelCount * 4);
+
+    // Optimize clamping function based on bit depth
+    let clamp;
+    if (bitDepth <= 8) {
+      clamp = (v) => Math.max(0, Math.min(255, v));
+    } else {
+      const shift = bitDepth - 8;
+      const offset = signed ? 1 << (bitDepth - 1) : 0;
+      clamp = (v) => {
+        const shifted = (signed ? v + offset : v) >> shift;
+        return Math.max(0, Math.min(255, shifted));
+      };
+    }
+
+    // Cache component arrays to reduce property lookups
+    const comp0 = components[0];
+    const comp1 = numComponents > 1 ? components[1] : null;
+    const comp2 = numComponents > 2 ? components[2] : null;
+
+    if (numComponents === 1) {
+      // Grayscale - optimized path
+      for (let i = 0, j = 0; i < pixelCount; i++, j += 4) {
+        const gray = clamp(comp0[i]);
+        rgba[j] = gray;
+        rgba[j + 1] = gray;
+        rgba[j + 2] = gray;
+        rgba[j + 3] = 255;
       }
-      const shifted = signed ? v + (1 << (bitDepth - 1)) : v;
-      return Math.max(0, Math.min(255, shifted >> (bitDepth - 8)));
-    };
-    const rgba = new Uint8Array(width * height * 4);
-    for (let i = 0; i < width * height; i++) {
-      let r, g, b, a;
-      if (numComponents === 1) {
-        r = g = b = clamp(components[0][i]);
-        a = 255;
-      } else {
-        r = numComponents > 0 ? clamp(components[0][i]) : 0;
-        g = numComponents > 1 ? clamp(components[1][i]) : 0;
-        b = numComponents > 2 ? clamp(components[2][i]) : 0;
-        a = numComponents > 3 ? clamp(components[3][i]) : 255;
+    } else if (numComponents === 3) {
+      // RGB without alpha - optimized path
+      for (let i = 0, j = 0; i < pixelCount; i++, j += 4) {
+        rgba[j] = clamp(comp0[i]);
+        rgba[j + 1] = clamp(comp1[i]);
+        rgba[j + 2] = clamp(comp2[i]);
+        rgba[j + 3] = 255;
       }
-      rgba[i * 4] = r;
-      rgba[i * 4 + 1] = g;
-      rgba[i * 4 + 2] = b;
-      rgba[i * 4 + 3] = a;
+    } else {
+      throw new Error(`Unsupported number of components for RGBA rendering: ${numComponents}`);
     }
 
     return {

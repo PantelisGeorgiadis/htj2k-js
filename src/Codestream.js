@@ -525,26 +525,36 @@ class Codestream {
       // Inverse colour transform
       if (isColorTransform && numComponents >= 3) {
         const len = componentData[0].length;
+        // Cache array references to reduce property lookups
+        const comp0 = componentData[0];
+        const comp1 = componentData[1];
+        const comp2 = componentData[2];
+
         if (isReversible) {
           // Inverse RCT: Y, Cb, Cr → R, G, B  (integer arithmetic)
           for (let i = 0; i < len; i++) {
-            const y = componentData[0][i];
-            const cb = componentData[1][i];
-            const cr = componentData[2][i];
+            const y = comp0[i];
+            const cb = comp1[i];
+            const cr = comp2[i];
             const g = y - ((cb + cr) >> 2);
-            componentData[0][i] = cr + g; // R
-            componentData[1][i] = g; // G
-            componentData[2][i] = cb + g; // B
+            comp0[i] = cr + g; // R
+            comp1[i] = g; // G
+            comp2[i] = cb + g; // B
           }
         } else {
-          // Inverse ICT
+          // Inverse ICT with precomputed constants
+          const ICT_CR_R = 1.402;
+          const ICT_CB_G = -0.34413;
+          const ICT_CR_G = -0.71414;
+          const ICT_CB_B = 1.772;
+
           for (let i = 0; i < len; i++) {
-            const y = componentData[0][i];
-            const cb = componentData[1][i];
-            const cr = componentData[2][i];
-            componentData[0][i] = y + 1.402 * cr; // R
-            componentData[1][i] = y - 0.34413 * cb - 0.71414 * cr; // G
-            componentData[2][i] = y + 1.772 * cb; // B
+            const y = comp0[i];
+            const cb = comp1[i];
+            const cr = comp2[i];
+            comp0[i] = y + ICT_CR_R * cr; // R
+            comp1[i] = y + ICT_CB_G * cb + ICT_CR_G * cr; // G
+            comp2[i] = y + ICT_CB_B * cb; // B
           }
         }
       }
@@ -619,12 +629,17 @@ class Codestream {
       const mant = s & 0x7ff;
       const guardBits = qcd.quantizationStyle >> 5;
       // Subband type: 0=LL, 1=HL, 2=LH, 3=HH
+      // Precompute subband type to avoid modulo in loop
       const sbType = bandIdx === 0 ? 0 : bandIdx % 3 === 0 ? 3 : bandIdx % 3;
-      const arr = [1, 2, 2, 4];
-      delta = (1 + mant / 2048) * arr[sbType] * Math.pow(2, guardBits + (bitDepth || 8) - 32);
+      const sbTypeScale = [1, 2, 2, 4][sbType];
+      delta = (1 + mant / 2048) * sbTypeScale * Math.pow(2, guardBits + (bitDepth || 8) - 32);
     }
 
-    for (const cb of sb.codeblocks) {
+    const codeblocks = sb.codeblocks;
+    const cbCount = codeblocks.length;
+
+    for (let cbIdx = 0; cbIdx < cbCount; cbIdx++) {
+      const cb = codeblocks[cbIdx];
       if (!cb.data || cb.passes === 0 || cb.lengths1 < 2) {
         continue;
       }
@@ -659,7 +674,10 @@ class Codestream {
       const dstX0 = cb.cbx0 - sx0;
       const dstY0 = cb.cby0 - sy0;
       const dstBase = dstY0 * sbW + dstX0;
+
       if (isReversible) {
+        // Reversible path - integer operations
+        const mask = 0x7fffffff;
         for (let j = 0; j < cbH; j++) {
           const srcOff = j * cbW;
           const dstOff = dstBase + j * sbW;
@@ -668,12 +686,14 @@ class Codestream {
             if (val === 0) {
               buf[dstOff + i] = 0;
             } else {
-              const mag = (val & 0x7fffffff) >>> p;
+              const mag = (val & mask) >>> p;
               buf[dstOff + i] = val >>> 31 ? -mag : mag;
             }
           }
         }
       } else {
+        // Irreversible path - floating point with quantization
+        const mask = 0x7fffffff;
         for (let j = 0; j < cbH; j++) {
           const srcOff = j * cbW;
           const dstOff = dstBase + j * sbW;
@@ -682,7 +702,7 @@ class Codestream {
             if (val === 0) {
               buf[dstOff + i] = 0;
             } else {
-              const mag = val & 0x7fffffff;
+              const mag = val & mask;
               buf[dstOff + i] = (val >>> 31 ? -mag : mag) * delta;
             }
           }

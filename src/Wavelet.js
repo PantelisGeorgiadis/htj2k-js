@@ -14,6 +14,14 @@ class Wavelet {
     this._scratchHw = new Float64Array(0);
     this._bound1dRev53 = this._iDwt1dRev53.bind(this);
     this._bound1dIrv97 = this._iDwt1dIrv97.bind(this);
+    // Reusable buffers for 2D transform
+    this._rowL = new Float64Array(0);
+    this._rowH = new Float64Array(0);
+    this._vertL = new Float64Array(0);
+    this._vertH = new Float64Array(0);
+    this._colInL = new Float64Array(0);
+    this._colInH = new Float64Array(0);
+    this._colOut = new Float64Array(0);
   }
 
   /**
@@ -179,30 +187,44 @@ class Wavelet {
     const lHgt = Math.ceil(resH / 2);
     const hHgt = Math.floor(resH / 2);
 
-    const rowL = new Float64Array(resW);
-    const rowH = new Float64Array(resW);
-    const vertL = new Float64Array(lHgt * resW);
-    const vertH = new Float64Array(hHgt * resW);
+    // Reuse buffers to reduce allocations
+    if (this._rowL.length < resW) this._rowL = new Float64Array(resW);
+    if (this._rowH.length < resW) this._rowH = new Float64Array(resW);
+    if (this._vertL.length < lHgt * resW) this._vertL = new Float64Array(lHgt * resW);
+    if (this._vertH.length < hHgt * resW) this._vertH = new Float64Array(hHgt * resW);
+    const rowL = this._rowL;
+    const rowH = this._rowH;
+    const vertL = this._vertL;
+    const vertH = this._vertH;
 
+    // Horizontal transform - low frequency rows
+    const emptyH = new Float64Array(0);
     for (let y = 0; y < lHgt; y++) {
-      const lRow = llBuf.subarray(y * lWid, y * lWid + lWid);
-      const hRow =
-        hWid > 0 && hlBuf ? hlBuf.subarray(y * hWid, y * hWid + hWid) : new Float64Array(0);
+      const yLWid = y * lWid;
+      const lRow = llBuf.subarray(yLWid, yLWid + lWid);
+      const hRow = hWid > 0 && hlBuf ? hlBuf.subarray(y * hWid, y * hWid + hWid) : emptyH;
       idwt1d(lRow, hRow, lWid, hWid, rowL);
       vertL.set(rowL, y * resW);
     }
+    // Horizontal transform - high frequency rows
     for (let y = 0; y < hHgt; y++) {
-      const lRow = lhBuf ? lhBuf.subarray(y * lWid, y * lWid + lWid) : new Float64Array(lWid);
-      const hRow =
-        hWid > 0 && hhBuf ? hhBuf.subarray(y * hWid, y * hWid + hWid) : new Float64Array(0);
+      const yLWid = y * lWid;
+      const lRow = lhBuf ? lhBuf.subarray(yLWid, yLWid + lWid) : emptyH;
+      const hRow = hWid > 0 && hhBuf ? hhBuf.subarray(y * hWid, y * hWid + hWid) : emptyH;
       idwt1d(lRow, hRow, lWid, hWid, rowH);
       vertH.set(rowH, y * resW);
     }
 
-    const colInL = new Float64Array(lHgt);
-    const colInH = new Float64Array(hHgt);
-    const colOut = new Float64Array(resH);
+    // Vertical transform - process columns
+    if (this._colInL.length < lHgt) this._colInL = new Float64Array(lHgt);
+    if (this._colInH.length < hHgt) this._colInH = new Float64Array(hHgt);
+    if (this._colOut.length < resH) this._colOut = new Float64Array(resH);
+    const colInL = this._colInL;
+    const colInH = this._colInH;
+    const colOut = this._colOut;
+
     for (let x = 0; x < resW; x++) {
+      // Extract column with better cache locality
       for (let y = 0; y < lHgt; y++) {
         colInL[y] = vertL[y * resW + x];
       }
@@ -210,6 +232,7 @@ class Wavelet {
         colInH[y] = vertH[y * resW + x];
       }
       idwt1d(colInL, colInH, lHgt, hHgt, colOut);
+      // Write column back
       for (let y = 0; y < resH; y++) {
         out[y * resW + x] = colOut[y];
       }
