@@ -83,6 +83,7 @@ const Marker = {
   Ppm: 0x60, // Packed packet headers, main header
   Ppt: 0x61, // Packed packet headers, tile-part header
   Crg: 0x63, // Component registration
+  Nlt: 0x76, // Non-linearity point transformation (Part 2 / HTJ2K Part 15)
 };
 Object.freeze(Marker);
 //#endregion

@@ -90,15 +90,20 @@ class Decoder {
     const pixelCount = width * height;
     const rgba = new Uint8Array(pixelCount * 4);
 
-    // Optimize clamping function based on bit depth
+    // Optimize clamping function based on bit depth.
+    // For high-bit-depth components, use a rounded (not truncating) right shift
+    // so the 8-bit display value is closer to the spec-defined value
+    // round(orig * 255 / (2^bitDepth - 1)); a plain >> shift introduces a half-LSB
+    // negative bias that is visible as a constant low-amplitude error in PSNR.
     let clamp;
     if (bitDepth <= 8) {
       clamp = (v) => Math.max(0, Math.min(255, v));
     } else {
       const shift = bitDepth - 8;
       const offset = signed ? 1 << (bitDepth - 1) : 0;
+      const half = 1 << (shift - 1);
       clamp = (v) => {
-        const shifted = (signed ? v + offset : v) >> shift;
+        const shifted = ((signed ? v + offset : v) + half) >> shift;
         return Math.max(0, Math.min(255, shifted));
       };
     }

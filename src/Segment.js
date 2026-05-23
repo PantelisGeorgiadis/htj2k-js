@@ -1041,11 +1041,190 @@ class ComSegment extends Segment {
 }
 //#endregion
 
+//#region PpmSegment
+class PpmSegment extends Segment {
+  /**
+   * Creates an instance of PpmSegment (packed packet headers, main header).
+   * @constructor
+   * @param {number} position - Segment position in codestream.
+   * @param {ArrayBuffer} buffer - Segment buffer (without marker / Lppm bytes).
+   */
+  constructor(position, buffer) {
+    super(Marker.Ppm, position, buffer);
+
+    this.zppm = 0;
+    // Raw payload following Zppm (concatenation of [Nppm uint32, Ippm bytes] groups
+    // when present). Consumers concatenate raw payloads across PPM segments ordered
+    // by Zppm, then walk the [Nppm, Ippm] structure to extract per-tile packet headers.
+    this.payload = new Uint8Array(0);
+  }
+
+  /**
+   * Gets the PPM segment index Zppm.
+   * @method
+   * @returns {number} Zppm.
+   */
+  getZppm() {
+    return this.zppm;
+  }
+
+  /**
+   * Gets the raw payload bytes that follow Zppm in this PPM segment.
+   * @method
+   * @returns {Uint8Array} Payload bytes.
+   */
+  getPayload() {
+    return this.payload;
+  }
+
+  /**
+   * Parses the segment.
+   * @method
+   */
+  parse() {
+    const binaryReader = new BinaryReader(this.getBuffer(), false);
+    this.zppm = binaryReader.readUint8();
+    const remaining = this.getBuffer().byteLength - 1;
+    this.payload = remaining > 0 ? binaryReader.readUint8Array(remaining) : new Uint8Array(0);
+  }
+
+  /**
+   * Gets the segment description.
+   * @method
+   * @returns {string} Segment description.
+   */
+  toString() {
+    return `${super.toString()} [Zppm: ${this.getZppm()}, Payload bytes: ${this.getPayload().byteLength}]`;
+  }
+}
+//#endregion
+
+//#region NltSegment
+class NltSegment extends Segment {
+  /**
+   * Creates an instance of NltSegment (non-linearity point transformation,
+   * ISO/IEC 15444-2 / ITU-T T.801 A.7.4, also referenced by HTJ2K Part 15).
+   * @constructor
+   * @param {number} position - Segment position in codestream.
+   * @param {ArrayBuffer} buffer - Segment buffer (without marker / Lnlt bytes).
+   */
+  constructor(position, buffer) {
+    super(Marker.Nlt, position, buffer);
+
+    /** Component number (0xFFFF means "all components"). */
+    this.cnlt = 0xffff;
+    /** Bit depth of the (un-pre-transformed) original samples (1..38). */
+    this.bdnlt = 0;
+    /** Signedness of the (un-pre-transformed) original samples. */
+    this.signed = false;
+    /** Non-linearity type. 1=gamma, 2=lookup table, 3=two's complement reinterpretation. */
+    this.tnlt = 0;
+    /** Optional gamma parameters (Tnlt = 1). */
+    this.gamma = null;
+    /** Optional LUT parameters (Tnlt = 2). */
+    this.lut = null;
+  }
+
+  /**
+   * Gets the component this NLT applies to (0xFFFF = all).
+   * @method
+   * @returns {number} Component index.
+   */
+  getComponent() {
+    return this.cnlt;
+  }
+
+  /**
+   * Gets whether this NLT applies to all components.
+   * @method
+   * @returns {boolean} True when Cnlt = 0xFFFF.
+   */
+  isForAllComponents() {
+    return this.cnlt === 0xffff;
+  }
+
+  /**
+   * Gets the original (pre-transformed) bit depth (1..38).
+   * @method
+   * @returns {number} Bit depth.
+   */
+  getBitDepth() {
+    return this.bdnlt;
+  }
+
+  /**
+   * Gets the original (pre-transformed) signedness.
+   * @method
+   * @returns {boolean} Signed flag.
+   */
+  isSigned() {
+    return this.signed;
+  }
+
+  /**
+   * Gets the NLT type (1=gamma, 2=LUT, 3=two's complement).
+   * @method
+   * @returns {number} Tnlt.
+   */
+  getType() {
+    return this.tnlt;
+  }
+
+  /**
+   * Parses the segment.
+   * @method
+   */
+  parse() {
+    const binaryReader = new BinaryReader(this.getBuffer(), false);
+    this.cnlt = binaryReader.readUint16();
+    const bdRaw = binaryReader.readUint8();
+    this.bdnlt = (bdRaw & 0x7f) + 1;
+    this.signed = (bdRaw & 0x80) !== 0;
+    this.tnlt = binaryReader.readUint8();
+
+    if (this.tnlt === 1) {
+      // Gamma: E, L, T (each 1 byte per A.7.4.3 in the simplest form)
+      const remaining = this.getBuffer().byteLength - 5;
+      if (remaining >= 3) {
+        this.gamma = {
+          e: binaryReader.readUint8(),
+          l: binaryReader.readUint8(),
+          t: binaryReader.readUint8(),
+        };
+      }
+    } else if (this.tnlt === 2) {
+      // LUT: Npts (uint16), then Dmin/Dmax/table. Store raw remaining bytes for now.
+      const remaining = this.getBuffer().byteLength - 5;
+      if (remaining >= 2) {
+        const npts = binaryReader.readUint16();
+        const tail = remaining - 2;
+        this.lut = {
+          npts,
+          raw: tail > 0 ? binaryReader.readUint8Array(tail) : new Uint8Array(0),
+        };
+      }
+    }
+    // Tnlt === 3 has no additional parameters.
+  }
+
+  /**
+   * Gets the segment description.
+   * @method
+   * @returns {string} Segment description.
+   */
+  toString() {
+    return `${super.toString()} [Cnlt: ${this.cnlt === 0xffff ? 'ALL' : this.cnlt}, BDnlt: ${this.getBitDepth()}, Signed: ${this.isSigned()}, Tnlt: ${this.getType()}]`;
+  }
+}
+//#endregion
+
 //#region Exports
 module.exports = {
   CapSegment,
   CodSegment,
   ComSegment,
+  NltSegment,
+  PpmSegment,
   QcdSegment,
   Segment,
   SizSegment,

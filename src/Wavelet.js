@@ -12,8 +12,11 @@ class Wavelet {
     this.CDF97_K = 1.230174104914001;
     this._scratchLw = new Float64Array(0);
     this._scratchHw = new Float64Array(0);
+    this.CDF97_INV_K = 1.0 / this.CDF97_K;
     this._bound1dRev53 = this._iDwt1dRev53.bind(this);
     this._bound1dIrv97 = this._iDwt1dIrv97.bind(this);
+    this._bound1dRev53Offset = this._iDwt1dRev53Offset.bind(this);
+    this._bound1dIrv97Offset = this._iDwt1dIrv97Offset.bind(this);
     // Reusable buffers for 2D transform
     this._rowL = new Float64Array(0);
     this._rowH = new Float64Array(0);
@@ -22,6 +25,9 @@ class Wavelet {
     this._colInL = new Float64Array(0);
     this._colInH = new Float64Array(0);
     this._colOut = new Float64Array(0);
+    this._blockL = new Float64Array(0);
+    this._blockH = new Float64Array(0);
+    this._blockOut = new Float64Array(0);
   }
 
   /**
@@ -88,8 +94,12 @@ class Wavelet {
       return;
     }
 
-    if (this._scratchLw.length < lLen) this._scratchLw = new Float64Array(lLen);
-    if (this._scratchHw.length < hLen) this._scratchHw = new Float64Array(hLen);
+    if (this._scratchLw.length < lLen) {
+      this._scratchLw = new Float64Array(lLen);
+    }
+    if (this._scratchHw.length < hLen) {
+      this._scratchHw = new Float64Array(hLen);
+    }
     const lw = this._scratchLw;
     const hw = this._scratchHw;
     for (let n = 0; n < lLen; n++) {
@@ -128,8 +138,12 @@ class Wavelet {
       return;
     }
 
-    if (this._scratchLw.length < lLen) this._scratchLw = new Float64Array(lLen);
-    if (this._scratchHw.length < hLen) this._scratchHw = new Float64Array(hLen);
+    if (this._scratchLw.length < lLen) {
+      this._scratchLw = new Float64Array(lLen);
+    }
+    if (this._scratchHw.length < hLen) {
+      this._scratchHw = new Float64Array(hLen);
+    }
     const lw = this._scratchLw;
     const hw = this._scratchHw;
     for (let n = 0; n < lLen; n++) {
@@ -166,6 +180,114 @@ class Wavelet {
   }
 
   /**
+   * Offset-based CDF 9/7 IDWT — reads/writes at array offsets to avoid subarray.
+   * @method
+   * @private
+   * @param {Float64Array} lSrc - Low-band samples source array.
+   * @param {number} lOff - Offset of low-band samples in source array.
+   * @param {Float64Array} hSrc - High-band samples source array.
+   * @param {number} hOff - Offset of high-band samples in source array.
+   * @param {number} lLen - Number of low-band samples.
+   * @param {number} hLen - Number of high-band samples.
+   * @param {Float64Array} out - Output array of length lLen + hLen.
+   * @param {number} outOff - Offset for output samples in output array.
+   */
+  _iDwt1dRev53Offset(lSrc, lOff, hSrc, hOff, lLen, hLen, out, outOff) {
+    if (lLen + hLen === 0) {
+      return;
+    }
+    if (hLen === 0) {
+      out[outOff] = lSrc[lOff];
+      return;
+    }
+
+    if (this._scratchLw.length < lLen) {
+      this._scratchLw = new Float64Array(lLen);
+    }
+    const lw = this._scratchLw;
+
+    for (let n = 0; n < lLen; n++) {
+      const hm = n > 0 ? hSrc[hOff + n - 1] : hSrc[hOff];
+      const hn = n < hLen ? hSrc[hOff + n] : hSrc[hOff + hLen - 1];
+      lw[n] = lSrc[lOff + n] - ((hm + hn + 2) >> 2);
+    }
+    for (let n = 0; n < lLen; n++) {
+      out[outOff + 2 * n] = lw[n];
+    }
+    for (let n = 0; n < hLen; n++) {
+      const lp = n + 1 < lLen ? lw[n + 1] : lw[lLen - 1];
+      out[outOff + 2 * n + 1] = hSrc[hOff + n] + ((lw[n] + lp) >> 1);
+    }
+  }
+
+  /**
+   * Offset-based CDF 9/7 IDWT — reads/writes at array offsets to avoid subarray.
+   * @method
+   * @private
+   * @param {Float64Array} lSrc - Low-band samples source array.
+   * @param {number} lOff - Offset of low-band samples in source array.
+   * @param {Float64Array} hSrc - High-band samples source array.
+   * @param {number} hOff - Offset of high-band samples in source array.
+   * @param {number} lLen - Number of low-band samples.
+   * @param {number} hLen - Number of high-band samples.
+   * @param {Float64Array} out - Output array of length lLen + hLen.
+   * @param {number} outOff - Offset for output samples in output array.
+   */
+  _iDwt1dIrv97Offset(lSrc, lOff, hSrc, hOff, lLen, hLen, out, outOff) {
+    if (lLen + hLen === 0) {
+      return;
+    }
+    if (hLen === 0) {
+      out[outOff] = lSrc[lOff];
+      return;
+    }
+
+    if (this._scratchLw.length < lLen) {
+      this._scratchLw = new Float64Array(lLen);
+    }
+    if (this._scratchHw.length < hLen) {
+      this._scratchHw = new Float64Array(hLen);
+    }
+    const lw = this._scratchLw;
+    const hw = this._scratchHw;
+    const K = this.CDF97_K;
+    const invK = this.CDF97_INV_K;
+    const delta = this.CDF97_DELTA;
+    const gamma = this.CDF97_GAMMA;
+    const beta = this.CDF97_BETA;
+    const alpha = this.CDF97_ALPHA;
+
+    for (let n = 0; n < lLen; n++) {
+      lw[n] = lSrc[lOff + n] * K;
+    }
+    for (let n = 0; n < hLen; n++) {
+      hw[n] = hSrc[hOff + n] * invK;
+    }
+
+    for (let n = 0; n < lLen; n++) {
+      const hm = n > 0 ? hw[n - 1] : hw[0];
+      const hn = n < hLen ? hw[n] : hw[hLen - 1];
+      lw[n] -= delta * (hm + hn);
+    }
+    for (let n = 0; n < hLen; n++) {
+      const lp = n + 1 < lLen ? lw[n + 1] : lw[lLen - 1];
+      hw[n] -= gamma * (lw[n] + lp);
+    }
+    for (let n = 0; n < lLen; n++) {
+      const hm = n > 0 ? hw[n - 1] : hw[0];
+      const hn = n < hLen ? hw[n] : hw[hLen - 1];
+      lw[n] -= beta * (hm + hn);
+    }
+    for (let n = 0; n < lLen; n++) {
+      out[outOff + 2 * n] = lw[n];
+    }
+    for (let n = 0; n < hLen; n++) {
+      const lp = n + 1 < lLen ? lw[n + 1] : lw[lLen - 1];
+      out[outOff + 2 * n + 1] = hw[n] - alpha * (lw[n] + lp);
+    }
+  }
+
+  /**
    * Apply 2D inverse DWT for one resolution level.
    * @method
    * @private
@@ -179,7 +301,7 @@ class Wavelet {
    * @returns {Float64Array}
    */
   _iDwt2dLevel(llBuf, hlBuf, lhBuf, hhBuf, resW, resH, isReversible) {
-    const idwt1d = isReversible ? this._bound1dRev53 : this._bound1dIrv97;
+    const idwt1dOff = isReversible ? this._bound1dRev53Offset : this._bound1dIrv97Offset;
     const out = new Float64Array(resW * resH);
 
     const lWid = Math.ceil(resW / 2);
@@ -187,54 +309,80 @@ class Wavelet {
     const lHgt = Math.ceil(resH / 2);
     const hHgt = Math.floor(resH / 2);
 
-    // Reuse buffers to reduce allocations
-    if (this._rowL.length < resW) this._rowL = new Float64Array(resW);
-    if (this._rowH.length < resW) this._rowH = new Float64Array(resW);
-    if (this._vertL.length < lHgt * resW) this._vertL = new Float64Array(lHgt * resW);
-    if (this._vertH.length < hHgt * resW) this._vertH = new Float64Array(hHgt * resW);
-    const rowL = this._rowL;
-    const rowH = this._rowH;
+    // Reuse vertical intermediate buffers
+    if (this._vertL.length < lHgt * resW) {
+      this._vertL = new Float64Array(lHgt * resW);
+    }
+    if (this._vertH.length < hHgt * resW) {
+      this._vertH = new Float64Array(hHgt * resW);
+    }
     const vertL = this._vertL;
     const vertH = this._vertH;
 
-    // Horizontal transform - low frequency rows
-    const emptyH = new Float64Array(0);
+    // Horizontal transform — write directly to vertL/vertH (no intermediate copies)
     for (let y = 0; y < lHgt; y++) {
-      const yLWid = y * lWid;
-      const lRow = llBuf.subarray(yLWid, yLWid + lWid);
-      const hRow = hWid > 0 && hlBuf ? hlBuf.subarray(y * hWid, y * hWid + hWid) : emptyH;
-      idwt1d(lRow, hRow, lWid, hWid, rowL);
-      vertL.set(rowL, y * resW);
+      idwt1dOff(llBuf, y * lWid, hlBuf, y * hWid, lWid, hWid, vertL, y * resW);
     }
-    // Horizontal transform - high frequency rows
     for (let y = 0; y < hHgt; y++) {
-      const yLWid = y * lWid;
-      const lRow = lhBuf ? lhBuf.subarray(yLWid, yLWid + lWid) : emptyH;
-      const hRow = hWid > 0 && hhBuf ? hhBuf.subarray(y * hWid, y * hWid + hWid) : emptyH;
-      idwt1d(lRow, hRow, lWid, hWid, rowH);
-      vertH.set(rowH, y * resW);
+      idwt1dOff(lhBuf, y * lWid, hhBuf, y * hWid, lWid, hWid, vertH, y * resW);
     }
 
-    // Vertical transform - process columns
-    if (this._colInL.length < lHgt) this._colInL = new Float64Array(lHgt);
-    if (this._colInH.length < hHgt) this._colInH = new Float64Array(hHgt);
-    if (this._colOut.length < resH) this._colOut = new Float64Array(resH);
-    const colInL = this._colInL;
-    const colInH = this._colInH;
+    // Vertical transform — blocked with transposed extraction for cache locality
+    const BLOCK = 32;
+    const blockLSize = lHgt * BLOCK;
+    const blockHSize = hHgt * BLOCK;
+    if (this._blockL.length < blockLSize) {
+      this._blockL = new Float64Array(blockLSize);
+    }
+    if (this._blockH.length < blockHSize) {
+      this._blockH = new Float64Array(blockHSize);
+    }
+    if (this._colOut.length < resH) {
+      this._colOut = new Float64Array(resH);
+    }
+    // Transposed block output: row-major [resH][BLOCK] so final writes to `out` are contiguous.
+    const blockOutSize = resH * BLOCK;
+    if (this._blockOut.length < blockOutSize) {
+      this._blockOut = new Float64Array(blockOutSize);
+    }
+    const blockL = this._blockL;
+    const blockH = this._blockH;
     const colOut = this._colOut;
+    const blockOut = this._blockOut;
 
-    for (let x = 0; x < resW; x++) {
-      // Extract column with better cache locality
+    for (let xStart = 0; xStart < resW; xStart += BLOCK) {
+      const bw = Math.min(BLOCK, resW - xStart);
+
+      // Extract columns into transposed layout (each column contiguous)
       for (let y = 0; y < lHgt; y++) {
-        colInL[y] = vertL[y * resW + x];
+        const srcBase = y * resW + xStart;
+        for (let dx = 0; dx < bw; dx++) {
+          blockL[dx * lHgt + y] = vertL[srcBase + dx];
+        }
       }
       for (let y = 0; y < hHgt; y++) {
-        colInH[y] = vertH[y * resW + x];
+        const srcBase = y * resW + xStart;
+        for (let dx = 0; dx < bw; dx++) {
+          blockH[dx * hHgt + y] = vertH[srcBase + dx];
+        }
       }
-      idwt1d(colInL, colInH, lHgt, hHgt, colOut);
-      // Write column back
+
+      // Process each column from contiguous transposed data; transpose results
+      // back into blockOut so the final write to `out` is contiguous (row-major).
+      for (let dx = 0; dx < bw; dx++) {
+        idwt1dOff(blockL, dx * lHgt, blockH, dx * hHgt, lHgt, hHgt, colOut, 0);
+        for (let y = 0; y < resH; y++) {
+          blockOut[y * BLOCK + dx] = colOut[y];
+        }
+      }
+
+      // Contiguous row writes to the destination buffer.
       for (let y = 0; y < resH; y++) {
-        out[y * resW + x] = colOut[y];
+        const srcBase = y * BLOCK;
+        const dstBase = y * resW + xStart;
+        for (let dx = 0; dx < bw; dx++) {
+          out[dstBase + dx] = blockOut[srcBase + dx];
+        }
       }
     }
 

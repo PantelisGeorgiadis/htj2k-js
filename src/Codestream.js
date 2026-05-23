@@ -2,6 +2,8 @@ const {
   CapSegment,
   CodSegment,
   ComSegment,
+  NltSegment,
+  PpmSegment,
   QcdSegment,
   Segment,
   SizSegment,
@@ -102,6 +104,12 @@ class Codestream {
       } else if (marker === Marker.Com) {
         segment = new ComSegment(position, data);
         segment.parse();
+      } else if (marker === Marker.Ppm) {
+        segment = new PpmSegment(position, data);
+        segment.parse();
+      } else if (marker === Marker.Nlt) {
+        segment = new NltSegment(position, data);
+        segment.parse();
       } else {
         segment = new Segment(marker, position, data);
       }
@@ -127,11 +135,18 @@ class Codestream {
     // Create empty tiles
     this._createTiles(siz, cod, qcd);
 
+    // Determine effective bit depth / signedness for component 0, taking NLT into
+    // account (a Part 2 NLT marker can override the SIZ-encoded values to reflect
+    // the original pre-transformed sample range).
+    const nlt = this._findNltSegment(0);
+    const effectiveBitDepth = nlt ? nlt.getBitDepth() : siz.getBitDepth(0);
+    const effectiveSigned = nlt ? nlt.isSigned() : siz.isSigned(0);
+
     return {
       width: siz.getWidth(0),
       height: siz.getHeight(0),
-      bitDepth: siz.getBitDepth(0),
-      signed: siz.isSigned(0),
+      bitDepth: effectiveBitDepth,
+      signed: effectiveSigned,
       components: siz.getComponents(),
       reversible: cod.isReversible(),
       decompositionLevels: cod.getDecompositionLevels(),
@@ -249,6 +264,63 @@ class Codestream {
 
   //#region Private Methods
   /**
+   * Finds the NLT segment that applies to a given component, if any.
+   * Per-component NLTs take precedence over global (Cnlt = 0xFFFF) NLTs.
+   * @method
+   * @private
+   * @param {number} component - Component index.
+   * @returns {NltSegment|undefined} Matching NLT segment, or undefined.
+   */
+  _findNltSegment(component) {
+    let global;
+    for (const s of this.segments) {
+      if (s.getMarker() !== Marker.Nlt) {
+        continue;
+      }
+      if (s.getComponent() === component) {
+        return s;
+      }
+      if (s.isForAllComponents()) {
+        global = s;
+      }
+    }
+    return global;
+  }
+
+  /**
+   * Builds (and caches) the concatenated PPM payload across all PPM segments,
+   * ordered by Zppm. Returns an empty Uint8Array if no PPM segments are present.
+   * @method
+   * @private
+   * @returns {Uint8Array} Concatenated PPM payload.
+   */
+  _getPpmBuffer() {
+    if (this._ppmBuffer !== undefined) {
+      return this._ppmBuffer;
+    }
+    const parts = this.segments
+      .filter((s) => s.getMarker() === Marker.Ppm)
+      .sort((a, b) => a.getZppm() - b.getZppm())
+      .map((s) => s.getPayload());
+    if (parts.length === 0) {
+      this._ppmBuffer = new Uint8Array(0);
+      return this._ppmBuffer;
+    }
+    let total = 0;
+    for (const p of parts) {
+      total += p.byteLength;
+    }
+    const merged = new Uint8Array(total);
+    let off = 0;
+    for (const p of parts) {
+      merged.set(p, off);
+      off += p.byteLength;
+    }
+    this._ppmBuffer = merged;
+    return this._ppmBuffer;
+  }
+
+  /**
    * Full decoding and rendering pipeline: reads packets, decodes codeblocks, runs IDWT,
    * applies colour transform, level-shifts and returns pixel data.
    * @method
@@ -285,7 +357,16 @@ class Codestream {
       imageComps.push(new ArrayType(siz.getWidth(c) * siz.getHeight(c)));
     }
 
-    // Process every tile and composite into the full-image buffers
+    // Process every tile and composite into the full-image buffers.
+    // PPM (packed packet headers in main header) handling: the concatenated
+    // PPM payload is structured as a sequence of [Nppm uint32, Ippm bytes] groups
+    // — one group per tile-part in the order they appear. We walk this cursor in
+    // lockstep with the tile-part loop and install each Ippm slice as the
+    // PacketReader's packed-header source.
+    const ppmBuffer = this._getPpmBuffer();
+    const ppmActive = ppmBuffer.byteLength > 0;
+    let ppmCursor = 0;
+
     for (const tile of this.tiles) {
       // Read packets according to progression order
       for (const tilePart of tile.tileParts) {
@@ -293,6 +374,30 @@ class Codestream {
         const dataEnd = tilePart.sotSegment.getPosition() + tilePart.sotSegment.getTilePartLength();
         let pos = dataStart;
         const progressionOrder = cod.getProgressionOrder();
+
+        // If PPM is in use, peel off the next [Nppm, Ippm] group for this tile-part
+        // and install it as the packet-header source.
+        if (ppmActive) {
+          if (ppmCursor + 4 > ppmBuffer.byteLength) {
+            throw new Error('PPM payload exhausted before all tile-parts were consumed');
+          }
+          const nppm =
+            (ppmBuffer[ppmCursor] * 0x1000000 +
+              ((ppmBuffer[ppmCursor + 1] << 16) |
+                (ppmBuffer[ppmCursor + 2] << 8) |
+                ppmBuffer[ppmCursor + 3])) >>>
+            0;
+          ppmCursor += 4;
+          const pphStart = ppmCursor;
+          const pphEnd = ppmCursor + nppm;
+          if (pphEnd > ppmBuffer.byteLength) {
+            throw new Error('PPM Nppm exceeds remaining PPM payload');
+          }
+          ppmCursor = pphEnd;
+          this.packetReader.setPphSource(ppmBuffer, pphStart, pphEnd);
+        } else {
+          this.packetReader.clearPphSource();
+        }
 
         if (progressionOrder === ProgressionOrder.Lrcp) {
           // Layer-Resolution-Component-Position
@@ -302,7 +407,7 @@ class Codestream {
                 const resolution = tile.tileComponents[c].resolutions[r];
                 const nPrecincts = resolution.getPrecinctParameters().numPrecincts;
                 for (let p = 0; p < nPrecincts; p++) {
-                  if (pos >= dataEnd) {
+                  if (this.packetReader.isExhausted(pos, dataEnd)) {
                     break;
                   }
                   pos = this.packetReader.readPacket(buffer, pos, dataEnd, l, resolution, p, cod);
@@ -318,7 +423,7 @@ class Codestream {
                 const resolution = tile.tileComponents[c].resolutions[r];
                 const nPrecincts = resolution.getPrecinctParameters().numPrecincts;
                 for (let p = 0; p < nPrecincts; p++) {
-                  if (pos >= dataEnd) {
+                  if (this.packetReader.isExhausted(pos, dataEnd)) {
                     break;
                   }
                   pos = this.packetReader.readPacket(buffer, pos, dataEnd, l, resolution, p, cod);
@@ -346,7 +451,7 @@ class Codestream {
                     continue;
                   }
                   for (let l = 0; l < qualityLayers; l++) {
-                    if (pos >= dataEnd) {
+                    if (this.packetReader.isExhausted(pos, dataEnd)) {
                       break;
                     }
                     pos = this.packetReader.readPacket(buffer, pos, dataEnd, l, resolution, p, cod);
@@ -377,7 +482,7 @@ class Codestream {
                     continue;
                   }
                   for (let l = 0; l < qualityLayers; l++) {
-                    if (pos >= dataEnd) {
+                    if (this.packetReader.isExhausted(pos, dataEnd)) {
                       break;
                     }
                     pos = this.packetReader.readPacket(buffer, pos, dataEnd, l, resolution, p, cod);
@@ -406,7 +511,7 @@ class Codestream {
                     continue;
                   }
                   for (let l = 0; l < qualityLayers; l++) {
-                    if (pos >= dataEnd) {
+                    if (this.packetReader.isExhausted(pos, dataEnd)) {
                       break;
                     }
                     pos = this.packetReader.readPacket(buffer, pos, dataEnd, l, resolution, p, cod);
@@ -599,12 +704,16 @@ class Codestream {
       }
     }
 
+    // PPM state belongs to this decode invocation only.
+    this.packetReader.clearPphSource();
+
+    const nlt = this._findNltSegment(0);
     return {
       components: imageComps,
       width: siz.getWidth(0),
       height: siz.getHeight(0),
-      bitDepth: siz.getBitDepth(0),
-      signed: siz.isSigned(0),
+      bitDepth: nlt ? nlt.getBitDepth() : siz.getBitDepth(0),
+      signed: nlt ? nlt.isSigned() : siz.isSigned(0),
     };
   }
 
@@ -676,32 +785,29 @@ class Codestream {
       const dstBase = dstY0 * sbW + dstX0;
 
       if (isReversible) {
-        // Reversible path - integer operations
+        // Reversible path - integer operations. `buf` is freshly zero-initialised,
+        // so we can skip writing 0 explicitly (the common case).
         const mask = 0x7fffffff;
         for (let j = 0; j < cbH; j++) {
           const srcOff = j * cbW;
           const dstOff = dstBase + j * sbW;
           for (let i = 0; i < cbW; i++) {
             const val = coeffs[srcOff + i];
-            if (val === 0) {
-              buf[dstOff + i] = 0;
-            } else {
+            if (val !== 0) {
               const mag = (val & mask) >>> p;
               buf[dstOff + i] = val >>> 31 ? -mag : mag;
             }
           }
         }
       } else {
-        // Irreversible path - floating point with quantization
+        // Irreversible path - floating point with quantization.
         const mask = 0x7fffffff;
         for (let j = 0; j < cbH; j++) {
           const srcOff = j * cbW;
           const dstOff = dstBase + j * sbW;
           for (let i = 0; i < cbW; i++) {
             const val = coeffs[srcOff + i];
-            if (val === 0) {
-              buf[dstOff + i] = 0;
-            } else {
+            if (val !== 0) {
               const mag = val & mask;
               buf[dstOff + i] = (val >>> 31 ? -mag : mag) * delta;
             }

@@ -1,6 +1,72 @@
 //#region PacketReader
 class PacketReader {
   /**
+   * Creates an instance of PacketReader.
+   * @constructor
+   */
+  constructor() {
+    // When non-null, packet *header* bits are pulled from this source (typically
+    // bytes accumulated from PPM/PPT markers) while packet *body* bytes still come
+    // from the main tile-part buffer. The bit-reader state for the pph source must
+    // persist across packets within a tile-part (per ISO/IEC 15444-1 B.10).
+    this._pphActive = false;
+    this._pphBuffer = null;
+    this._pphPos = 0;
+    this._pphEnd = 0;
+    this._pphBitBuf = 0;
+    this._pphBitsLeft = 0;
+    this._pphSkipMsb = false;
+  }
+
+  /**
+   * Sets a packed-packet-header (PPM/PPT) source whose bytes will be used for
+   * packet header bit-reading until {@link clearPphSource} is called. Body bytes
+   * continue to be read from the main tile-part buffer passed to readPacket.
+   * @method
+   * @param {Uint8Array} buffer - Header byte source.
+   * @param {number} pos - Starting position within buffer.
+   * @param {number} end - Exclusive end position within buffer.
+   */
+  setPphSource(buffer, pos, end) {
+    this._pphActive = true;
+    this._pphBuffer = buffer;
+    this._pphPos = pos;
+    this._pphEnd = end;
+    this._pphBitBuf = 0;
+    this._pphBitsLeft = 0;
+    this._pphSkipMsb = false;
+  }
+
+  /**
+   * Clears any previously installed packed-packet-header source.
+   * @method
+   */
+  clearPphSource() {
+    this._pphActive = false;
+    this._pphBuffer = null;
+  }
+
+  /**
+   * Returns true when no more packet data is available. When a packed-packet-header
+   * source is installed, this also reports exhaustion of that header source — the
+   * inline body-buffer pos alone is not a reliable progression signal because
+   * empty packets do not advance it.
+   * @method
+   * @param {number} pos - Current main-buffer position.
+   * @param {number} dataEnd - Exclusive end of the main-buffer tile-part data.
+   * @returns {boolean} True when no more packets can be read.
+   */
+  isExhausted(pos, dataEnd) {
+    if (pos >= dataEnd) {
+      return true;
+    }
+    if (this._pphActive && this._pphPos >= this._pphEnd) {
+      return true;
+    }
+    return false;
+  }
+
+  /**
    * Read one HTJ2K packet header + body.
    * Updates codeblock data (cb.data, cb.missingMSBs, cb.passes, etc.)
    * in the SubBand structures for this resolution / precinct.
@@ -19,8 +85,13 @@ class PacketReader {
       return pos;
     }
 
+    const initialPos = pos;
+    const initialPphPos = this._pphActive ? this._pphPos : 0;
     const useSop = cod.useSopMarker();
-    const useEph = cod.useEphMarker();
+    // When packet headers are packed into PPM, EPH (if used) lives inside the
+    // packed-header bitstream, not inline in the body. We therefore only look
+    // for inline EPH when headers are read in-line from the tile-part buffer.
+    const useEph = cod.useEphMarker() && !this._pphActive;
     const subBands = resolution.subBands;
     const pp = resolution.getPrecinctParameters();
     const numPrecinctsWide = pp.numPrecinctsWide;
@@ -30,13 +101,24 @@ class PacketReader {
       pos += 6;
     }
 
-    // Initialize bit-reader state for packet header parsing
-    this._buffer = buffer;
-    this._dataEnd = dataEnd;
-    this._bitPos = pos;
-    this._bitBuf = 0;
-    this._bitsLeft = 0;
-    this._skipMsb = false;
+    // Initialize bit-reader state for packet header parsing. When a packed-header
+    // source is active (PPM/PPT), header bits come from there; otherwise from the
+    // main tile-part buffer at the current pos.
+    if (this._pphActive) {
+      this._buffer = this._pphBuffer;
+      this._dataEnd = this._pphEnd;
+      this._bitPos = this._pphPos;
+      this._bitBuf = this._pphBitBuf;
+      this._bitsLeft = this._pphBitsLeft;
+      this._skipMsb = this._pphSkipMsb;
+    } else {
+      this._buffer = buffer;
+      this._dataEnd = dataEnd;
+      this._bitPos = pos;
+      this._bitBuf = 0;
+      this._bitsLeft = 0;
+      this._skipMsb = false;
+    }
 
     // Find precinct by (px, py) coordinates in the subband's precincts array.
     const pxVal = precinctIdx % numPrecinctsWide;
@@ -137,12 +219,22 @@ class PacketReader {
       }
     }
 
-    // Align bit reader to byte boundary, then advance pos
+    // Align bit reader to byte boundary, then advance pos.
+    // For in-line headers, header advancement contributes to pos. For PPM/PPT
+    // headers, only the pph cursor advances; pos remains where it was so the body
+    // bytes are read from the main tile-part buffer.
     this._bitsLeft = 0;
     this._skipMsb = false;
-    pos = this._bitPos;
+    if (this._pphActive) {
+      this._pphPos = this._bitPos;
+      this._pphBitBuf = 0;
+      this._pphBitsLeft = 0;
+      this._pphSkipMsb = false;
+    } else {
+      pos = this._bitPos;
+    }
 
-    // Skip EPH (0xFF92, 2 bytes) if present after header bits
+    // Skip EPH (0xFF92, 2 bytes) if present after header bits (inline-headers only).
     if (useEph && pos + 1 < dataEnd && buffer[pos] === 0xff && buffer[pos + 1] === 0x92) {
       pos += 2;
     }
@@ -176,6 +268,18 @@ class PacketReader {
         cb.lengths2 = len2;
         cb.passes += actualPasses;
       }
+    }
+
+    // No-progress guard: if a packet read produced no advance whatsoever
+    // (neither in the main tile-part buffer nor in the pph header buffer) we are
+    // about to loop forever in the caller. Surface a clear error instead.
+    const advancedMain = pos > initialPos;
+    const advancedPph = this._pphActive && this._pphPos > initialPphPos;
+    if (!advancedMain && !advancedPph) {
+      throw new Error(
+        `PacketReader made no progress at position ${initialPos} ` +
+          `(layer ${layer}, precinct ${precinctIdx})`
+      );
     }
 
     return pos;

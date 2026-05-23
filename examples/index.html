@@ -2,128 +2,377 @@
 <html lang="en">
   <head>
     <title>htj2k-js rendering example</title>
-    <meta charset="utf-8" />
-    <meta
-      name="viewport"
-      content="user-scalable=no, width=device-width, initial-scale=1, maximum-scale=1"
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/github-fork-ribbon-css/0.2.3/gh-fork-ribbon.min.css"
     />
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <script src="https://unpkg.com/vue@3.5.13/dist/vue.global.prod.js"></script>
     <style>
-      html,
-      body {
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
         margin: 0;
         padding: 0;
+      }
+
+      html,
+      body {
+        min-height: 100%;
         width: 100%;
-        height: 100%;
-        display: table;
       }
-      .container {
-        display: table-cell;
-        text-align: center;
-        vertical-align: middle;
+
+      body {
+        min-height: 100vh;
+        background: #0d1117;
+        color: #c9d1d9;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+        font-size: 14px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding: 32px 16px;
       }
-      .content {
-        display: inline-block;
+
+      .page-title {
+        font-size: 24px;
+        font-weight: 600;
+        color: #f0f6fc;
+        letter-spacing: -0.3px;
+        margin-bottom: 16px;
+      }
+
+      .card {
+        width: 100%;
+        max-width: 960px;
+        background: #161b22;
+        border: 1px solid #30363d;
+        border-radius: 12px;
+        overflow: hidden;
+      }
+
+      .drop-zone {
+        padding: 30px 20px;
         text-align: center;
+        border-bottom: 1px solid #30363d;
+        transition:
+          background 0.15s,
+          box-shadow 0.15s;
+      }
+
+      .drop-zone.dragging {
+        background: rgba(88, 166, 255, 0.05);
+        box-shadow: inset 0 0 0 2px #58a6ff;
+      }
+
+      .drop-title {
+        font-size: 13px;
+        color: #8b949e;
+        margin-bottom: 14px;
+      }
+
+      .btn-row {
+        display: flex;
+        gap: 8px;
+        justify-content: center;
+      }
+
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        padding: 6px 16px;
+        border-radius: 6px;
+        border: 1px solid;
+        font-size: 13px;
+        font-weight: 500;
+        cursor: pointer;
+        transition:
+          background 0.12s,
+          opacity 0.12s;
+      }
+
+      .btn:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+
+      .btn-primary {
+        color: #58a6ff;
+        border-color: rgba(56, 139, 253, 0.4);
+        background: transparent;
+      }
+
+      .btn-primary:not(:disabled):hover {
+        background: rgba(88, 166, 255, 0.1);
+      }
+
+      .status-bar {
+        padding: 8px 14px;
+        border-bottom: 1px solid #30363d;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        min-height: 40px;
+      }
+
+      .status-text {
+        flex: 1;
+        font-size: 12px;
+        color: #8b949e;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .status-text.error {
+        color: #f85149;
+      }
+
+      .renderer-badge {
+        color: #3fb950;
+        border: 1px solid rgba(63, 185, 80, 0.3);
+        background: rgba(63, 185, 80, 0.06);
+        border-radius: 20px;
+        padding: 2px 8px;
+        font-size: 11px;
+        font-weight: 500;
+        flex-shrink: 0;
+      }
+
+      .canvas-wrap {
+        background: #0d1117;
+        padding: 16px;
+        text-align: center;
+        min-height: 260px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      canvas {
+        max-width: 100%;
+        max-height: 70vh;
+        display: block;
+        border-radius: 4px;
+      }
+
+      .footer-note {
+        margin-top: 14px;
+        font-size: 12px;
+        color: #484f58;
+        text-align: center;
+      }
+
+      @media (max-width: 640px) {
+        .btn-row {
+          flex-direction: column;
+        }
+
+        .btn {
+          justify-content: center;
+        }
+      }
+    </style>
+    <style>
+      .github-fork-ribbon:before {
+        background-color: #58a6ff;
       }
     </style>
   </head>
   <body>
-    <div id="dropZone" class="container">
-      <div class="content">
-        <p id="infoText">
-          <a id="openLink" href="">Open</a> or drag and drop an HTJ2K file to render it!<br />Nothing
-          gets uploaded anywhere.
-        </p>
-        <canvas id="renderingCanvas"></canvas>
+    <a
+      class="github-fork-ribbon left-top"
+      href="https://github.com/PantelisGeorgiadis/htj2k-js"
+      data-ribbon="Visit me on GitHub"
+      title="Visit me on GitHub"
+      target="_blank"
+      >Visit me on GitHub</a
+    >
+    <h1 class="page-title">htj2k-js rendering example</h1>
+
+    <div id="app">
+      <div
+        class="card"
+        @dragover.prevent="onDragOver"
+        @dragleave="onDragLeave"
+        @drop.prevent="onDrop"
+      >
+        <div class="drop-zone" :class="{ dragging: isDragging }">
+          <p class="drop-title">Open or drag and drop an HTJ2K file to render it!</p>
+          <div class="btn-row">
+            <button class="btn btn-primary" :disabled="isRendering" @click="openFile">
+              Open HTJ2K file
+            </button>
+          </div>
+        </div>
+
+        <div class="status-bar">
+          <span class="status-text" :class="{ error: hasError }">{{ statusText }}</span>
+          <span class="renderer-badge">Canvas</span>
+        </div>
+
+        <div class="canvas-wrap">
+          <canvas ref="canvasRef"></canvas>
+        </div>
       </div>
+      <p class="footer-note">Nothing is uploaded anywhere.</p>
     </div>
+
+    <script type="text/javascript" src="htj2k-js.min.js"></script>
+    <script>
+      const { createApp, ref, onMounted } = Vue;
+      const { Decoder } = window.htj2kJs;
+
+      createApp({
+        setup() {
+          const canvasRef = ref(null);
+          const isDragging = ref(false);
+          const isRendering = ref(false);
+          const hasError = ref(false);
+          const statusText = ref('');
+
+          function clearCurrentImage() {
+            const canvasElement = canvasRef.value;
+            if (!canvasElement) {
+              return;
+            }
+            canvasElement.width = 0;
+            canvasElement.height = 0;
+          }
+
+          function renderArrayBuffer(arrayBuffer) {
+            const canvasElement = canvasRef.value;
+            if (!canvasElement) {
+              return;
+            }
+
+            const t0 = performance.now();
+            const htj2kd = new Decoder(arrayBuffer, { logSegmentMarkers: true, logBoxes: true });
+            const header = htj2kd.readHeader();
+            const t1 = performance.now();
+
+            canvasElement.width = header.width;
+            canvasElement.height = header.height;
+
+            const decodingResult = htj2kd.decodeAndRenderToRgba();
+            const renderedPixels = decodingResult.data;
+            const t2 = performance.now();
+
+            const ctx = canvasElement.getContext('2d');
+            ctx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            const imageData = ctx.createImageData(header.width, header.height);
+            const canvasPixels = imageData.data;
+            for (let i = 0; i < 4 * header.width * header.height; i++) {
+              canvasPixels[i] = renderedPixels[i];
+            }
+            ctx.putImageData(imageData, 0, 0);
+            const t3 = performance.now();
+
+            statusText.value =
+              header.width +
+              'x' +
+              header.height +
+              ' | Parse ' +
+              (t1 - t0).toFixed(2) +
+              ' ms | Decode ' +
+              (t2 - t1).toFixed(2) +
+              ' ms | Draw ' +
+              (t3 - t2).toFixed(2) +
+              ' ms';
+
+            console.log('Header parsing time: ' + (t1 - t0) + ' ms');
+            console.log('Decoding time: ' + (t2 - t1) + ' ms');
+            console.log('Drawing time: ' + (t3 - t2) + ' ms');
+          }
+
+          function renderFile(file) {
+            if (!file) {
+              return;
+            }
+
+            const reader = new FileReader();
+            isRendering.value = true;
+            hasError.value = false;
+            statusText.value = 'Loading file...';
+
+            reader.onload = () => {
+              try {
+                renderArrayBuffer(reader.result);
+              } catch (err) {
+                clearCurrentImage();
+                hasError.value = true;
+                statusText.value = 'Error: ' + err.message;
+                console.error(err);
+              } finally {
+                isRendering.value = false;
+              }
+            };
+
+            reader.onerror = () => {
+              clearCurrentImage();
+              isRendering.value = false;
+              hasError.value = true;
+              statusText.value = 'Error reading file';
+            };
+
+            reader.readAsArrayBuffer(file);
+          }
+
+          function onDragOver(event) {
+            isDragging.value = true;
+            if (event.dataTransfer) {
+              event.dataTransfer.dropEffect = 'copy';
+            }
+          }
+
+          function onDragLeave() {
+            isDragging.value = false;
+          }
+
+          function onDrop(event) {
+            isDragging.value = false;
+            const file =
+              event.dataTransfer && event.dataTransfer.files
+                ? event.dataTransfer.files[0]
+                : undefined;
+            renderFile(file);
+          }
+
+          function openFile() {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.onchange = (event) => {
+              const file = event.target.files[0];
+              renderFile(file);
+            };
+            input.click();
+          }
+
+          onMounted(() => {
+            window.addEventListener('dragover', (event) => {
+              event.preventDefault();
+            });
+            window.addEventListener('drop', (event) => {
+              event.preventDefault();
+            });
+          });
+
+          return {
+            canvasRef,
+            isDragging,
+            isRendering,
+            hasError,
+            statusText,
+            onDragOver,
+            onDragLeave,
+            onDrop,
+            openFile,
+          };
+        },
+      }).mount('#app');
+    </script>
   </body>
-  <script type="text/javascript" src="htj2k-js.min.js"></script>
-  <script>
-    const { Decoder } = window.htj2kJs;
-
-    function renderFile(file) {
-      const reader = new FileReader();
-      reader.onload = (file) => {
-        const arrayBuffer = reader.result;
-        const canvasElement = document.getElementById('renderingCanvas');
-        const infoTextElement = document.getElementById('infoText');
-        infoTextElement.innerText = '';
-
-        const t0 = performance.now();
-
-        const htj2kd = new Decoder(arrayBuffer, { logSegmentMarkers: true, logBoxes: true });
-        const header = htj2kd.readHeader();
-
-        const t1 = performance.now();
-        console.log(`Header parsing time: ${t1 - t0} ms`);
-
-        const renderingResult = render({
-          header,
-          htj2kd,
-          canvasElement,
-          infoTextElement,
-        });
-      };
-      reader.readAsArrayBuffer(file);
-    }
-
-    function render(opts) {
-      opts.canvasElement.width = opts.header.width;
-      opts.canvasElement.height = opts.header.height;
-      opts.infoTextElement.innerHTML = '';
-
-      try {
-        const t0 = performance.now();
-
-        const decodingResult = opts.htj2kd.decodeAndRenderToRgba();
-        const renderedPixels = decodingResult.data;
-
-        const t1 = performance.now();
-
-        const ctx = opts.canvasElement.getContext('2d');
-        ctx.clearRect(0, 0, opts.canvasElement.width, opts.canvasElement.height);
-        const imageData = ctx.createImageData(opts.header.width, opts.header.height);
-        const canvasPixels = imageData.data;
-        for (let i = 0; i < 4 * opts.header.width * opts.header.height; i++) {
-          canvasPixels[i] = renderedPixels[i];
-        }
-        ctx.putImageData(imageData, 0, 0);
-
-        const t2 = performance.now();
-
-        opts.infoTextElement.innerHTML = '';
-        console.log(`Decoding time: ${t1 - t0} ms`);
-        console.log(`Drawing time: ${t2 - t1} ms`);
-      } catch (err) {
-        opts.infoTextElement.innerText = 'Error: ' + err.message;
-        throw err;
-      }
-    }
-
-    const dropZone = document.getElementById('dropZone');
-    dropZone.ondragover = (event) => {
-      event.stopPropagation();
-      event.preventDefault();
-      event.dataTransfer.dropEffect = 'copy';
-    };
-    dropZone.ondrop = (event) => {
-      event.stopPropagation();
-      event.preventDefault();
-      const files = event.dataTransfer.files;
-      renderFile(files[0]);
-    };
-
-    const openLink = document.getElementById('openLink');
-    openLink.onclick = () => {
-      const input = document.createElement('input');
-      input.type = 'file';
-      input.onchange = (event) => {
-        const files = event.target.files;
-        renderFile(files[0]);
-      };
-      input.click();
-      return false;
-    };
-  </script>
 </html>
