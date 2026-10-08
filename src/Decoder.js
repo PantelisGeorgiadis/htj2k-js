@@ -113,6 +113,10 @@ class Decoder {
     const comp1 = numComponents > 1 ? components[1] : null;
     const comp2 = numComponents > 2 ? components[2] : null;
 
+    // Pre-fill the alpha channel once (fast typed-array fill) instead of
+    // writing rgba[j+3] per pixel.
+    rgba.fill(255, 3, pixelCount * 4, 4);
+
     if (numComponents === 1) {
       // Grayscale - optimized path
       for (let i = 0, j = 0; i < pixelCount; i++, j += 4) {
@@ -120,7 +124,6 @@ class Decoder {
         rgba[j] = gray;
         rgba[j + 1] = gray;
         rgba[j + 2] = gray;
-        rgba[j + 3] = 255;
       }
     } else if (numComponents === 3) {
       // RGB without alpha - optimized path
@@ -128,7 +131,6 @@ class Decoder {
         rgba[j] = clamp(comp0[i]);
         rgba[j + 1] = clamp(comp1[i]);
         rgba[j + 2] = clamp(comp2[i]);
-        rgba[j + 3] = 255;
       }
     } else {
       throw new Error(`Unsupported number of components for RGBA rendering: ${numComponents}`);

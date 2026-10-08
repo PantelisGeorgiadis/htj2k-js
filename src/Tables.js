@@ -843,14 +843,23 @@ const uVlcBias = new Uint8Array(256 + 64);
  * @param {Array} src - The source table containing VLC codeword information.
  */
 function _buildVlcTable(tbl, src) {
-  for (let i = 0; i < 1024; i++) {
-    const cwd = i & 0x7f;
-    const cQ = i >> 7;
-    for (let j = 0; j < src.length; j++) {
-      const [scQ, srho, suOff, seK, se1, scwd, scwdLen] = src[j];
-      if (scQ === cQ && scwd === (cwd & ((1 << scwdLen) - 1))) {
-        tbl[i] = (srho << 4) | (suOff << 3) | (seK << 12) | (se1 << 8) | scwdLen;
-      }
+  // For each source entry, all 7-bit codeword prefixes whose low scwdLen bits
+  // equal scwd map to table index (scQ << 7) | cwd. Writing those indices
+  // directly in source order reproduces the search-and-overwrite behavior of
+  // a full scan over all 1024 indices (last matching entry wins).
+  for (let j = 0; j < src.length; j++) {
+    const scQ = src[j][0];
+    const srho = src[j][1];
+    const suOff = src[j][2];
+    const seK = src[j][3];
+    const se1 = src[j][4];
+    const scwd = src[j][5];
+    const scwdLen = src[j][6];
+    const val = (srho << 4) | (suOff << 3) | (seK << 12) | (se1 << 8) | scwdLen;
+    const base = (scQ << 7) | scwd;
+    const step = 1 << scwdLen;
+    for (let idx = base; idx < (scQ + 1) << 7; idx += step) {
+      tbl[idx] = val;
     }
   }
 }

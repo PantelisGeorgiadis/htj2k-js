@@ -107,6 +107,7 @@ class BlockDecoder {
     }
 
     const p = 30 - missingMSBs;
+
     const scup = (codedData[offset + lengths1 - 1] << 4) | (codedData[offset + lengths1 - 2] & 0xf);
     if (scup < 2 || scup > lengths1 || scup > 4079) {
       return null;
@@ -117,24 +118,34 @@ class BlockDecoder {
     const decodedSize = stride * height;
     if (this._decoded.length < decodedSize) {
       this._decoded = new Int32Array(decodedSize);
-    } else {
-      this._decoded.fill(0, 0, decodedSize);
     }
+    // No per-codeblock zeroing: every decoded[dp] used downstream is written
+    // unconditionally by the MagSgn stage before any pass reads it.
     const decoded = this._decoded;
     const mmsbp2 = missingMSBs + 2;
     const sstr = (width + 4 + 7) & ~7; // multiple of 8, with >=4 extra entries of padding
     const scratchSize = sstr * 513;
     if (this._scratch.length < scratchSize) {
       this._scratch = new Uint16Array(scratchSize);
-    } else {
-      this._scratch.fill(0, 0, scratchSize);
     }
+    // No per-codeblock zeroing: every scratch position read by a row was
+    // written by the current codeblock, provided each quad row zeroes its
+    // own trailing padding quad at row end (below) before the next row
+    // consumes it as right-side context.
     const scratch = this._scratch;
 
     // Step 1: decode VLC + MEL
     {
       const mel = this._melInit(codedData, offset, lcup, scup);
       const vlc = this._revInit(codedData, offset, lcup, scup);
+      // Hoist reverse-VLC bit-reader state into locals; the rare refills go
+      // through _revFetch which operates on the shared state object.
+      let rvLo = vlc.tmpLo;
+      let rvHi = vlc.tmpHi;
+      let rvBits = vlc.bits;
+      let rvPos = vlc.pos;
+      let rvSize = vlc.size;
+      let rvUnst = vlc.unstuff;
       let run = this._melGetRun(mel);
       let vlcVal;
       let cQ = 0;
@@ -142,7 +153,22 @@ class BlockDecoder {
 
       // Initial quad row (y=0)
       for (let x = 0; x < width; sp += 4) {
-        vlcVal = this._revFetch(vlc);
+        if (rvBits < 32) {
+          vlc.tmpLo = rvLo;
+          vlc.tmpHi = rvHi;
+          vlc.bits = rvBits;
+          vlc.pos = rvPos;
+          vlc.size = rvSize;
+          vlc.unstuff = rvUnst;
+          this._revFetch(vlc);
+          rvLo = vlc.tmpLo;
+          rvHi = vlc.tmpHi;
+          rvBits = vlc.bits;
+          rvPos = vlc.pos;
+          rvSize = vlc.size;
+          rvUnst = vlc.unstuff;
+        }
+        vlcVal = rvLo >>> 0;
         let t0 = vlcTable0[cQ + (vlcVal & 0x7f)];
         if (cQ === 0) {
           run -= 2;
@@ -154,7 +180,15 @@ class BlockDecoder {
         scratch[sp] = t0;
         x += 2;
         cQ = ((t0 & 0x10) << 3) | ((t0 & 0xe0) << 2);
-        vlcVal = this._revAdvance(vlc, t0 & 0x7);
+        {
+          const k = t0 & 0x7;
+          if (k > 0) {
+            rvLo = ((rvLo >>> k) | (rvHi << (32 - k))) >>> 0;
+            rvHi = rvHi >>> k;
+            rvBits -= k;
+          }
+          vlcVal = rvLo >>> 0;
+        }
 
         let t1 = 0;
         t1 = vlcTable0[cQ + (vlcVal & 0x7f)];
@@ -169,7 +203,15 @@ class BlockDecoder {
         scratch[sp + 2] = t1;
         x += 2;
         cQ = ((t1 & 0x10) << 3) | ((t1 & 0xe0) << 2);
-        vlcVal = this._revAdvance(vlc, t1 & 0x7);
+        {
+          const k = t1 & 0x7;
+          if (k > 0) {
+            rvLo = ((rvLo >>> k) | (rvHi << (32 - k))) >>> 0;
+            rvHi = rvHi >>> k;
+            rvBits -= k;
+          }
+          vlcVal = rvLo >>> 0;
+        }
 
         // decode u for the quad pair
         let uvlcMode = ((t0 & 0x8) << 3) | ((t1 & 0x8) << 4);
@@ -181,11 +223,27 @@ class BlockDecoder {
           }
         }
         let uvlcEntry = uVlcTable0[uvlcMode + (vlcVal & 0x3f)];
-        vlcVal = this._revAdvance(vlc, uvlcEntry & 0x7);
+        {
+          const k = uvlcEntry & 0x7;
+          if (k > 0) {
+            rvLo = ((rvLo >>> k) | (rvHi << (32 - k))) >>> 0;
+            rvHi = rvHi >>> k;
+            rvBits -= k;
+          }
+          vlcVal = rvLo >>> 0;
+        }
         uvlcEntry >>= 3;
         let len = uvlcEntry & 0xf;
         let tmp = vlcVal & ((1 << len) - 1);
-        vlcVal = this._revAdvance(vlc, len);
+        {
+          const k = len;
+          if (k > 0) {
+            rvLo = ((rvLo >>> k) | (rvHi << (32 - k))) >>> 0;
+            rvHi = rvHi >>> k;
+            rvBits -= k;
+          }
+          vlcVal = rvLo >>> 0;
+        }
         uvlcEntry >>= 4;
         len = uvlcEntry & 0x7;
         uvlcEntry >>= 3;
@@ -206,7 +264,22 @@ class BlockDecoder {
           cQ |= (scratch[psp] & 0xa0) << 2;
           cQ |= (scratch[psp + 2] & 0x20) << 4;
 
-          vlcVal = this._revFetch(vlc);
+          if (rvBits < 32) {
+            vlc.tmpLo = rvLo;
+            vlc.tmpHi = rvHi;
+            vlc.bits = rvBits;
+            vlc.pos = rvPos;
+            vlc.size = rvSize;
+            vlc.unstuff = rvUnst;
+            this._revFetch(vlc);
+            rvLo = vlc.tmpLo;
+            rvHi = vlc.tmpHi;
+            rvBits = vlc.bits;
+            rvPos = vlc.pos;
+            rvSize = vlc.size;
+            rvUnst = vlc.unstuff;
+          }
+          vlcVal = rvLo >>> 0;
           let t0 = vlcTable1[cQ + (vlcVal & 0x7f)];
           if (cQ === 0) {
             run -= 2;
@@ -222,7 +295,15 @@ class BlockDecoder {
           cQ |= (scratch[psp + 2] & 0xa0) << 2;
           const nsp2 = psp + 4;
           cQ |= (nsp2 < sstr * (height / 2 + 1) ? scratch[nsp2] & 0x20 : 0) << 4;
-          vlcVal = this._revAdvance(vlc, t0 & 0x7);
+          {
+            const k = t0 & 0x7;
+            if (k > 0) {
+              rvLo = ((rvLo >>> k) | (rvHi << (32 - k))) >>> 0;
+              rvHi = rvHi >>> k;
+              rvBits -= k;
+            }
+            vlcVal = rvLo >>> 0;
+          }
 
           let t1 = 0;
           t1 = vlcTable1[cQ + (vlcVal & 0x7f)];
@@ -238,16 +319,40 @@ class BlockDecoder {
           x += 2;
           cQ = ((t1 & 0x40) << 2) | ((t1 & 0x80) << 1);
           cQ |= scratch[psp + 2] & 0x80;
-          vlcVal = this._revAdvance(vlc, t1 & 0x7);
+          {
+            const k = t1 & 0x7;
+            if (k > 0) {
+              rvLo = ((rvLo >>> k) | (rvHi << (32 - k))) >>> 0;
+              rvHi = rvHi >>> k;
+              rvBits -= k;
+            }
+            vlcVal = rvLo >>> 0;
+          }
 
           // decode u for the quad pair
           let uvlcMode = ((t0 & 0x8) << 3) | ((t1 & 0x8) << 4);
           let uvlcEntry = uVlcTable1[uvlcMode + (vlcVal & 0x3f)];
-          vlcVal = this._revAdvance(vlc, uvlcEntry & 0x7);
+          {
+            const k = uvlcEntry & 0x7;
+            if (k > 0) {
+              rvLo = ((rvLo >>> k) | (rvHi << (32 - k))) >>> 0;
+              rvHi = rvHi >>> k;
+              rvBits -= k;
+            }
+            vlcVal = rvLo >>> 0;
+          }
           uvlcEntry >>= 3;
           let len = uvlcEntry & 0xf;
           let tmp = vlcVal & ((1 << len) - 1);
-          vlcVal = this._revAdvance(vlc, len);
+          {
+            const k = len;
+            if (k > 0) {
+              rvLo = ((rvLo >>> k) | (rvHi << (32 - k))) >>> 0;
+              rvHi = rvHi >>> k;
+              rvBits -= k;
+            }
+            vlcVal = rvLo >>> 0;
+          }
           uvlcEntry >>= 4;
           len = uvlcEntry & 0x7;
           uvlcEntry >>= 3;
@@ -256,13 +361,23 @@ class BlockDecoder {
           uQ = ((uvlcEntry >> 3) + (tmp >> len)) & 0xffff;
           scratch[sp + 3] = uQ;
         }
-        scratch[sp - sstr + 0] = scratch[sp - sstr + 1] = 0;
+        // Zero this row's own padding quad so the next row's right-edge
+        // context reads see zeros (row qr+1 consumes row qr's padding quad).
+        scratch[sp + 0] = scratch[sp + 1] = 0;
       }
     }
 
     // Step 2: decode MagSgn
     {
       const magsgn = this._frwdInit(codedData, offset, lcup - scup, 0xff);
+      // Hoist forward bit-reader state into locals; rare refills go through
+      // _frwdFetch on the shared state object.
+      let mLo = magsgn.tmpLo;
+      let mHi = magsgn.tmpHi;
+      let mBits = magsgn.bits;
+      let mPos = magsgn.pos;
+      let mSize = magsgn.size;
+      let mUnst = magsgn.unstuff;
       const vNScratch = this._vNScratch;
       vNScratch.fill(0, 0, (width >>> 1) + 4);
       let sp = 0;
@@ -279,80 +394,151 @@ class BlockDecoder {
         }
         let vN;
 
-        for (let bit = 0; bit < 4; bit += 2) {
-          let val = 0;
-          if (inf & (1 << (4 + bit))) {
-            const msVal = this._frwdFetch(magsgn);
-            const mN = uQ - ((inf >> (12 + bit)) & 1);
-            this._frwdAdvance(magsgn, mN);
-            val = (msVal << 31) >>> 0;
-            vN = msVal & ((1 << mN) - 1);
-            vN |= ((inf >> (8 + bit)) & 1) << mN;
-            vN |= 1;
-            val = (val | ((vN + 2) << (p - 1))) >>> 0;
-          } else {
-            vN = 0;
+        // bit 0: top sample of this column
+        let val = 0;
+        if (inf & 16) {
+          if (mBits < 32) {
+            magsgn.tmpLo = mLo;
+            magsgn.tmpHi = mHi;
+            magsgn.bits = mBits;
+            magsgn.pos = mPos;
+            magsgn.size = mSize;
+            magsgn.unstuff = mUnst;
+            this._frwdFetch(magsgn);
+            mLo = magsgn.tmpLo;
+            mHi = magsgn.tmpHi;
+            mBits = magsgn.bits;
+            mPos = magsgn.pos;
+            mSize = magsgn.size;
+            mUnst = magsgn.unstuff;
           }
-          if (bit === 0) {
-            decoded[dp] = val | 0;
-          } else {
-            decoded[dp] = val | 0;
+          const msVal = mLo >>> 0;
+          const mN = uQ - ((inf >> 12) & 1);
+          if (mN > 0) {
+            mLo = ((mLo >>> mN) | (mHi << (32 - mN))) >>> 0;
+            mHi = mHi >>> mN;
           }
-          if (bit === 0) {
-            // second sample in pair (bottom of column)
-            let val2 = 0;
-            if (inf & (1 << (4 + 1))) {
-              const msVal = this._frwdFetch(magsgn);
-              const mN = uQ - ((inf >> (12 + 1)) & 1);
-              this._frwdAdvance(magsgn, mN);
-              val2 = (msVal << 31) >>> 0;
-              vN = msVal & ((1 << mN) - 1);
-              vN |= ((inf >> (8 + 1)) & 1) << mN;
-              vN |= 1;
-              val2 = (val2 | ((vN + 2) << (p - 1))) >>> 0;
-            } else {
-              vN = 0;
-            }
-            decoded[dp + stride] = val2 | 0;
-            vNScratch[vp] = prevVN | vN;
-            prevVN = 0;
-            dp++;
-            if (++x >= width) {
-              vp++;
-              break;
-            }
-            // next column (bits 2&3)
-            val = 0;
-            if (inf & (1 << (4 + 2))) {
-              const msVal = this._frwdFetch(magsgn);
-              const mN = uQ - ((inf >> (12 + 2)) & 1);
-              this._frwdAdvance(magsgn, mN);
-              val = (msVal << 31) >>> 0;
-              let vN2 = msVal & ((1 << mN) - 1);
-              vN2 |= ((inf >> (8 + 2)) & 1) << mN;
-              vN2 |= 1;
-              val = (val | ((vN2 + 2) << (p - 1))) >>> 0;
-            }
-            decoded[dp] = val | 0;
-            val = 0;
-            vN = 0;
-            if (inf & (1 << (4 + 3))) {
-              const msVal = this._frwdFetch(magsgn);
-              const mN = uQ - ((inf >> (12 + 3)) & 1);
-              this._frwdAdvance(magsgn, mN);
-              val = (msVal << 31) >>> 0;
-              vN = msVal & ((1 << mN) - 1);
-              vN |= ((inf >> (8 + 3)) & 1) << mN;
-              vN |= 1;
-              val = (val | ((vN + 2) << (p - 1))) >>> 0;
-            }
-            decoded[dp + stride] = val | 0;
-            prevVN = vN;
-            dp++;
-            x++;
-            break;
-          }
+          mBits -= mN;
+          val = (msVal << 31) >>> 0;
+          vN = msVal & ((1 << mN) - 1);
+          vN |= ((inf >> 8) & 1) << mN;
+          vN |= 1;
+          val = (val | ((vN + 2) << (p - 1))) >>> 0;
+        } else {
+          vN = 0;
         }
+        decoded[dp] = val | 0;
+
+        // bit 1: bottom sample of this column
+        let val2 = 0;
+        vN = 0;
+        if (inf & 32) {
+          if (mBits < 32) {
+            magsgn.tmpLo = mLo;
+            magsgn.tmpHi = mHi;
+            magsgn.bits = mBits;
+            magsgn.pos = mPos;
+            magsgn.size = mSize;
+            magsgn.unstuff = mUnst;
+            this._frwdFetch(magsgn);
+            mLo = magsgn.tmpLo;
+            mHi = magsgn.tmpHi;
+            mBits = magsgn.bits;
+            mPos = magsgn.pos;
+            mSize = magsgn.size;
+            mUnst = magsgn.unstuff;
+          }
+          const msVal = mLo >>> 0;
+          const mN = uQ - ((inf >> 13) & 1);
+          if (mN > 0) {
+            mLo = ((mLo >>> mN) | (mHi << (32 - mN))) >>> 0;
+            mHi = mHi >>> mN;
+          }
+          mBits -= mN;
+          val2 = (msVal << 31) >>> 0;
+          vN = msVal & ((1 << mN) - 1);
+          vN |= ((inf >> 9) & 1) << mN;
+          vN |= 1;
+          val2 = (val2 | ((vN + 2) << (p - 1))) >>> 0;
+        }
+        decoded[dp + stride] = val2 | 0;
+        vNScratch[vp] = prevVN | vN;
+        prevVN = 0;
+        dp++;
+        if (++x >= width) {
+          vp++;
+          break;
+        }
+
+        // bit 2: top sample of next column
+        val = 0;
+        if (inf & 64) {
+          if (mBits < 32) {
+            magsgn.tmpLo = mLo;
+            magsgn.tmpHi = mHi;
+            magsgn.bits = mBits;
+            magsgn.pos = mPos;
+            magsgn.size = mSize;
+            magsgn.unstuff = mUnst;
+            this._frwdFetch(magsgn);
+            mLo = magsgn.tmpLo;
+            mHi = magsgn.tmpHi;
+            mBits = magsgn.bits;
+            mPos = magsgn.pos;
+            mSize = magsgn.size;
+            mUnst = magsgn.unstuff;
+          }
+          const msVal = mLo >>> 0;
+          const mN = uQ - ((inf >> 14) & 1);
+          if (mN > 0) {
+            mLo = ((mLo >>> mN) | (mHi << (32 - mN))) >>> 0;
+            mHi = mHi >>> mN;
+          }
+          mBits -= mN;
+          val = (msVal << 31) >>> 0;
+          vN = msVal & ((1 << mN) - 1);
+          vN |= ((inf >> 10) & 1) << mN;
+          vN |= 1;
+          val = (val | ((vN + 2) << (p - 1))) >>> 0;
+        }
+        decoded[dp] = val | 0;
+
+        // bit 3: bottom sample of next column
+        val = 0;
+        vN = 0;
+        if (inf & 128) {
+          if (mBits < 32) {
+            magsgn.tmpLo = mLo;
+            magsgn.tmpHi = mHi;
+            magsgn.bits = mBits;
+            magsgn.pos = mPos;
+            magsgn.size = mSize;
+            magsgn.unstuff = mUnst;
+            this._frwdFetch(magsgn);
+            mLo = magsgn.tmpLo;
+            mHi = magsgn.tmpHi;
+            mBits = magsgn.bits;
+            mPos = magsgn.pos;
+            mSize = magsgn.size;
+            mUnst = magsgn.unstuff;
+          }
+          const msVal = mLo >>> 0;
+          const mN = uQ - ((inf >> 15) & 1);
+          if (mN > 0) {
+            mLo = ((mLo >>> mN) | (mHi << (32 - mN))) >>> 0;
+            mHi = mHi >>> mN;
+          }
+          mBits -= mN;
+          val = (msVal << 31) >>> 0;
+          vN = msVal & ((1 << mN) - 1);
+          vN |= ((inf >> 11) & 1) << mN;
+          vN |= 1;
+          val = (val | ((vN + 2) << (p - 1))) >>> 0;
+        }
+        decoded[dp + stride] = val | 0;
+        prevVN = vN;
+        dp++;
+        x++;
       }
       vNScratch[vp] = prevVN;
 
@@ -377,10 +563,29 @@ class BlockDecoder {
           let vN;
           // bit 0
           let val = 0;
-          if (inf & (1 << 4)) {
-            const msVal = this._frwdFetch(magsgn);
+          if (inf & 16) {
+            if (mBits < 32) {
+              magsgn.tmpLo = mLo;
+              magsgn.tmpHi = mHi;
+              magsgn.bits = mBits;
+              magsgn.pos = mPos;
+              magsgn.size = mSize;
+              magsgn.unstuff = mUnst;
+              this._frwdFetch(magsgn);
+              mLo = magsgn.tmpLo;
+              mHi = magsgn.tmpHi;
+              mBits = magsgn.bits;
+              mPos = magsgn.pos;
+              mSize = magsgn.size;
+              mUnst = magsgn.unstuff;
+            }
+            const msVal = mLo >>> 0;
             const mN = UQ - ((inf >> 12) & 1);
-            this._frwdAdvance(magsgn, mN);
+            if (mN > 0) {
+              mLo = ((mLo >>> mN) | (mHi << (32 - mN))) >>> 0;
+              mHi = mHi >>> mN;
+            }
+            mBits -= mN;
             val = (msVal << 31) >>> 0;
             vN = (msVal & ((1 << mN) - 1)) | (((inf >> 8) & 1) << mN) | 1;
             val = (val | ((vN + 2) << (p - 1))) >>> 0;
@@ -392,10 +597,29 @@ class BlockDecoder {
           // bit 1
           val = 0;
           let vN1 = 0;
-          if (inf & (1 << 5)) {
-            const msVal = this._frwdFetch(magsgn);
+          if (inf & 32) {
+            if (mBits < 32) {
+              magsgn.tmpLo = mLo;
+              magsgn.tmpHi = mHi;
+              magsgn.bits = mBits;
+              magsgn.pos = mPos;
+              magsgn.size = mSize;
+              magsgn.unstuff = mUnst;
+              this._frwdFetch(magsgn);
+              mLo = magsgn.tmpLo;
+              mHi = magsgn.tmpHi;
+              mBits = magsgn.bits;
+              mPos = magsgn.pos;
+              mSize = magsgn.size;
+              mUnst = magsgn.unstuff;
+            }
+            const msVal = mLo >>> 0;
             const mN = UQ - ((inf >> 13) & 1);
-            this._frwdAdvance(magsgn, mN);
+            if (mN > 0) {
+              mLo = ((mLo >>> mN) | (mHi << (32 - mN))) >>> 0;
+              mHi = mHi >>> mN;
+            }
+            mBits -= mN;
             val = (msVal << 31) >>> 0;
             vN1 = (msVal & ((1 << mN) - 1)) | (((inf >> 9) & 1) << mN) | 1;
             val = (val | ((vN1 + 2) << (p - 1))) >>> 0;
@@ -411,10 +635,29 @@ class BlockDecoder {
 
           // bit 2
           val = 0;
-          if (inf & (1 << 6)) {
-            const msVal = this._frwdFetch(magsgn);
+          if (inf & 64) {
+            if (mBits < 32) {
+              magsgn.tmpLo = mLo;
+              magsgn.tmpHi = mHi;
+              magsgn.bits = mBits;
+              magsgn.pos = mPos;
+              magsgn.size = mSize;
+              magsgn.unstuff = mUnst;
+              this._frwdFetch(magsgn);
+              mLo = magsgn.tmpLo;
+              mHi = magsgn.tmpHi;
+              mBits = magsgn.bits;
+              mPos = magsgn.pos;
+              mSize = magsgn.size;
+              mUnst = magsgn.unstuff;
+            }
+            const msVal = mLo >>> 0;
             const mN = UQ - ((inf >> 14) & 1);
-            this._frwdAdvance(magsgn, mN);
+            if (mN > 0) {
+              mLo = ((mLo >>> mN) | (mHi << (32 - mN))) >>> 0;
+              mHi = mHi >>> mN;
+            }
+            mBits -= mN;
             val = (msVal << 31) >>> 0;
             vN = (msVal & ((1 << mN) - 1)) | (((inf >> 10) & 1) << mN) | 1;
             val = (val | ((vN + 2) << (p - 1))) >>> 0;
@@ -426,10 +669,29 @@ class BlockDecoder {
           // bit 3
           val = 0;
           vN1 = 0;
-          if (inf & (1 << 7)) {
-            const msVal = this._frwdFetch(magsgn);
+          if (inf & 128) {
+            if (mBits < 32) {
+              magsgn.tmpLo = mLo;
+              magsgn.tmpHi = mHi;
+              magsgn.bits = mBits;
+              magsgn.pos = mPos;
+              magsgn.size = mSize;
+              magsgn.unstuff = mUnst;
+              this._frwdFetch(magsgn);
+              mLo = magsgn.tmpLo;
+              mHi = magsgn.tmpHi;
+              mBits = magsgn.bits;
+              mPos = magsgn.pos;
+              mSize = magsgn.size;
+              mUnst = magsgn.unstuff;
+            }
+            const msVal = mLo >>> 0;
             const mN = UQ - ((inf >> 15) & 1);
-            this._frwdAdvance(magsgn, mN);
+            if (mN > 0) {
+              mLo = ((mLo >>> mN) | (mHi << (32 - mN))) >>> 0;
+              mHi = mHi >>> mN;
+            }
+            mBits -= mN;
             val = (msVal << 31) >>> 0;
             vN1 = (msVal & ((1 << mN) - 1)) | (((inf >> 11) & 1) << mN) | 1;
             val = (val | ((vN1 + 2) << (p - 1))) >>> 0;
@@ -1019,6 +1281,37 @@ class BlockDecoder {
     let tmpHi = st.tmpHi;
     let bits = st.bits;
     const data = st.data;
+
+    // Fast path: unstuffed stream with >= 4 real bytes, none > 0x8f (a byte
+    // > 0x8f forces bit stuffing on the following byte). All four bytes
+    // contribute 8 bits and unstuff stays cleared: merge as one word.
+    if (!unstuff && size >= 4) {
+      const d0 = data[pos];
+      const d1 = data[pos - 1];
+      const d2 = data[pos - 2];
+      const d3 = data[pos - 3];
+      if (d0 <= 0x8f && d1 <= 0x8f && d2 <= 0x8f && d3 <= 0x8f) {
+        const w = (d0 | (d1 << 8) | (d2 << 16) | (d3 << 24)) >>> 0;
+        pos -= 4;
+        size -= 4;
+        if (bits >= 32) {
+          tmpHi = (tmpHi | ((w << (bits - 32)) >>> 0)) >>> 0;
+        } else {
+          tmpLo = (tmpLo | (w << bits)) >>> 0;
+          if (bits !== 0) {
+            tmpHi = (tmpHi | (w >>> (32 - bits))) >>> 0;
+          }
+        }
+        bits += 32;
+        st.pos = pos;
+        st.size = size;
+        st.tmpLo = tmpLo;
+        st.tmpHi = tmpHi;
+        st.bits = bits;
+        return;
+      }
+    }
+
     for (let i = 0; i < 4; i++) {
       let d = 0;
       if (size > 0) {
@@ -1151,6 +1444,37 @@ class BlockDecoder {
     let bits = st.bits;
     const data = st.data;
     const fillByte = st.fillByte;
+
+    // Fast path: unstuffed stream with >= 4 real bytes, none equal to 0xff.
+    // All four bytes contribute 8 bits each and unstuff stays cleared, so the
+    // 32-bit little-endian word is merged in a single step.
+    if (unstuff === 0 && size >= 4) {
+      const d0 = data[pos];
+      const d1 = data[pos + 1];
+      const d2 = data[pos + 2];
+      const d3 = data[pos + 3];
+      if (d0 !== 0xff && d1 !== 0xff && d2 !== 0xff && d3 !== 0xff) {
+        const w = (d0 | (d1 << 8) | (d2 << 16) | (d3 << 24)) >>> 0;
+        pos += 4;
+        size -= 4;
+        if (bits >= 32) {
+          tmpHi = (tmpHi | ((w << (bits - 32)) >>> 0)) >>> 0;
+        } else {
+          tmpLo = (tmpLo | (w << bits)) >>> 0;
+          if (bits !== 0) {
+            tmpHi = (tmpHi | (w >>> (32 - bits))) >>> 0;
+          }
+        }
+        bits += 32;
+        st.pos = pos;
+        st.size = size;
+        st.tmpLo = tmpLo;
+        st.tmpHi = tmpHi;
+        st.bits = bits;
+        return;
+      }
+    }
+
     for (let i = 0; i < 4; i++) {
       let d = fillByte;
       if (size > 0) {
