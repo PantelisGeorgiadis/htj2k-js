@@ -1,3 +1,93 @@
+//#region PacketTagTrees
+/**
+ * Fresh-per-packet quad/tag trees for HTJ2K packet headers, mirroring the
+ * `tag_tree` structures that OpenJPH re-initialises for every packet parse
+ * (ojph_precinct.cpp precinct::parse). Two trees are kept: an inclusion tree
+ * (values 0/1) and a missing-MSBs tree (unary counts). Each level of a tree
+ * spans ceil(w / 2^level) x ceil(h / 2^level) nodes; level `numLevels` holds
+ * the single root node.
+ */
+class PacketTagTrees {
+  /**
+   * Creates an instance of PacketTagTrees.
+   * @constructor
+   * @param {number} w - Codeblock grid width of the precinct portion.
+   * @param {number} h - Codeblock grid height of the precinct portion.
+   */
+  constructor(w, h) {
+    this.w = w;
+    this.h = h;
+    this.numLevels = 1 + Math.max(PacketTagTrees._log2ceil(w), PacketTagTrees._log2ceil(h));
+    // Precompute per-level origins for values and flags (leaf level first).
+    this.valueOrigins = [];
+    this.flagOrigins = [];
+    const levelDims = [];
+    let total = 0;
+    for (let lev = 0; lev <= this.numLevels; lev++) {
+      levelDims.push([Math.ceil(w / Math.pow(2, lev)), Math.ceil(h / Math.pow(2, lev))]);
+    }
+    // OpenJPH's num_levels includes the root implicitly: level dims shrink
+    // until 1x1 at numLevels.
+    for (let lev = 0; lev <= this.numLevels; lev++) {
+      this.valueOrigins.push(total);
+      this.flagOrigins.push(total);
+      total += levelDims[lev][0] * levelDims[lev][1];
+    }
+    this.levelDims = levelDims;
+    this.incValues = new Uint8Array(total);
+    this.incFlags = new Uint8Array(total);
+    this.mmsbValues = new Uint8Array(total);
+    this.mmsbFlags = new Uint8Array(total);
+  }
+
+  static _log2ceil(v) {
+    if (v <= 1) {
+      return 0;
+    }
+    let n = 0;
+    let p = 1;
+    while (p < v) {
+      p *= 2;
+      n++;
+    }
+    return n;
+  }
+
+  _index(x, y, lev) {
+    const w = this.levelDims[lev][0];
+    return this.valueOrigins[lev] + y * w + x;
+  }
+
+  incValue(x, y, lev) {
+    return this.incValues[this._index(x, y, lev)];
+  }
+
+  incFlagged(x, y, lev) {
+    return this.incFlags[this._index(x, y, lev)] !== 0;
+  }
+
+  setInc(x, y, lev, value, flagged) {
+    const i = this._index(x, y, lev);
+    this.incValues[i] = value;
+    this.incFlags[i] = flagged ? 1 : 0;
+  }
+
+  mmsbValue(x, y, lev) {
+    return this.mmsbValues[this._index(x, y, lev)];
+  }
+
+  mmsbFlagged(x, y, lev) {
+    return this.mmsbFlags[this._index(x, y, lev)] !== 0;
+  }
+
+  setMmsb(x, y, lev, value, flagged) {
+    const i = this._index(x, y, lev);
+    this.mmsbValues[i] = value;
+    this.mmsbFlags[i] = flagged ? 1 : 0;
+  }
+}
+//#endregion
+
 //#region PacketReader
 class PacketReader {
   /**
@@ -88,10 +178,12 @@ class PacketReader {
     const initialPos = pos;
     const initialPphPos = this._pphActive ? this._pphPos : 0;
     const useSop = cod.useSopMarker();
-    // When packet headers are packed into PPM, EPH (if used) lives inside the
-    // packed-header bitstream, not inline in the body. We therefore only look
-    // for inline EPH when headers are read in-line from the tile-part buffer.
-    const useEph = cod.useEphMarker() && !this._pphActive;
+    // Per Rec. ITU-T T.800 Figure B.10 the EPH marker sits at the end of the
+    // packet HEADER. When headers are packed via PPM/PPT, the EPH markers are
+    // stored as literal 0xff92 bytes inside the packed-header data (this is
+    // what Kakadu writes and what OpenJPEG consumes from ppm_data). SOP
+    // markers, in contrast, stay inline in the tile-part body.
+    const useEph = cod.useEphMarker();
     const subBands = resolution.subBands;
     const pp = resolution.getPrecinctParameters();
     const numPrecinctsWide = pp.numPrecinctsWide;
@@ -158,6 +250,12 @@ class PacketReader {
             continue;
           }
 
+          // HTJ2K tag trees are rebuilt FRESH for every packet: inclusion and
+          // missing-MSB values never persist across packets (each HT codeblock
+          // segment is self-contained). See OpenJPH precinct::parse, which
+          // re-initialises the trees inside the per-band loop of every packet.
+          const trees = new PacketTagTrees(precinct.cbsW, precinct.cbsH);
+
           for (let cbLocalY = 0; cbLocalY < precinct.cbsH; cbLocalY++) {
             for (let cbLocalX = 0; cbLocalX < precinct.cbsW; cbLocalX++) {
               const cbGlobalX = precinct.cbOffX + cbLocalX;
@@ -168,37 +266,30 @@ class PacketReader {
               }
               const cb = sb.codeblocks[cbIdx];
 
-              // Inclusion
-              const included = this._readInclusionBit(
-                cbLocalX,
-                cbLocalY,
-                layer,
-                precinct.inclusionTree
-              );
+              // Inclusion (fresh per-packet tree)
+              const included = this._readInclusionHT(cbLocalX, cbLocalY, trees);
               if (!included) {
                 continue;
               }
 
-              // Zero bitplanes — only on first inclusion
-              const cbLocalIdx = cbLocalY * precinct.cbsW + cbLocalX;
-              if (!precinct.included[cbLocalIdx]) {
-                cb.missingMSBs = this._readZeroBitplanes(cbLocalX, cbLocalY, precinct.zeroBitTree);
-                precinct.included[cbLocalIdx] = 1;
-              }
+              // Zero bitplanes / missing MSBs — read fresh for every packet
+              const missingMSBs = this._readMissingMSBsHT(cbLocalX, cbLocalY, trees);
 
-              // Number of passes (encodes placeholder pass groups for HTJ2K)
+              // Number of passes (encodes placeholder pass groups for HTJ2K).
+              // In HTJ2K each packet's codeblock segment is a self-contained
+              // HT block: placeholder passes shift the effective MSB count for
+              // THIS packet only — they are not accumulated across packets.
               const numPasses = this._readNumPasses();
               const numPhld = Math.floor((numPasses - 1) / 3);
-              cb.missingMSBs = (cb.missingMSBs || 0) + numPhld;
+              cb.missingMSBs = missingMSBs + numPhld;
               const actualPasses = numPasses - numPhld * 3;
 
-              // Lblock: starts at 3, cumulative across layers per codeblock
-              if (cb.lblock === undefined) {
-                cb.lblock = 3;
-              }
+              // Lblock: starts at 3 for each packet header occurrence
+              let lblock = 3;
               while (this._readBit() === 1) {
-                cb.lblock++;
+                lblock++;
               }
+              cb.lblock = lblock;
 
               // Length 1 (cleanup pass segment)
               const numPhldPasses = numPhld * 3;
@@ -230,13 +321,22 @@ class PacketReader {
       this._pphBitBuf = 0;
       this._pphBitsLeft = 0;
       this._pphSkipMsb = false;
+      // Consume the literal EPH marker bytes (0xff 0x92) stored at the end of
+      // every packet's packed header (ITU-T T.800 Figure B.10 with PPM/PPT).
+      if (
+        useEph &&
+        this._pphPos + 1 < this._pphEnd &&
+        this._pphBuffer[this._pphPos] === 0xff &&
+        this._pphBuffer[this._pphPos + 1] === 0x92
+      ) {
+        this._pphPos += 2;
+      }
     } else {
       pos = this._bitPos;
-    }
-
-    // Skip EPH (0xFF92, 2 bytes) if present after header bits (inline-headers only).
-    if (useEph && pos + 1 < dataEnd && buffer[pos] === 0xff && buffer[pos + 1] === 0x92) {
-      pos += 2;
+      // Skip inline EPH (0xFF92, 2 bytes) if present after header bits.
+      if (useEph && pos + 1 < dataEnd && buffer[pos] === 0xff && buffer[pos + 1] === 0x92) {
+        pos += 2;
+      }
     }
 
     // Read coded codeblock body bytes (raw — not bit-stuffed)
@@ -253,21 +353,13 @@ class PacketReader {
       const chunk = buffer.slice(pos, end);
       pos = end;
 
-      if (!cb.data) {
-        cb.data = chunk;
-        cb.lengths1 = len1;
-        cb.lengths2 = len2;
-        cb.passes = actualPasses;
-      } else {
-        // Multi-layer: concatenate
-        const merged = new Uint8Array(cb.data.length + totalBytes);
-        merged.set(cb.data);
-        merged.set(chunk, cb.data.length);
-        cb.data = merged;
-        // Keep the original cleanup-pass length; update refinement length
-        cb.lengths2 = len2;
-        cb.passes += actualPasses;
-      }
+      // HTJ2K codeblock segments are self-contained per packet: successive
+      // packets (e.g. additional quality layers) REFINISH the codeblock by
+      // replacing the stored segment, not by appending to it.
+      cb.data = chunk;
+      cb.lengths1 = len1;
+      cb.lengths2 = len2;
+      cb.passes = actualPasses;
     }
 
     // No-progress guard: if a packet read produced no advance whatsoever
@@ -327,55 +419,69 @@ class PacketReader {
   }
 
   /**
-   * Inclusion-tree read: navigates from ROOT toward LEAF for codeblock (cx, cy).
-   * Returns true if codeblock is included in this layer.
+   * HTJ2K inclusion-tree read (fresh per-packet tree). Descends from the root
+   * toward the leaf for codeblock (cx, cy): a node value of 1 means its subtree
+   * is entirely not-included; the first "0" bit encountered (not yet read for
+   * that node) marks the subtree not-included, while a "1" bit continues the
+   * descent. Bit stuffing is handled by {@link _readBit}.
+   * Mirrors OpenJPH precinct::parse inclusion walk.
    * @method
    * @private
    * @param {number} cx - Codeblock local x index.
    * @param {number} cy - Codeblock local y index.
-   * @param {number} layerIdx - Quality layer index.
-   * @param {InclusionTree} incTree - Inclusion tag tree.
-   * @returns {boolean} True if codeblock is included.
+   * @param {PacketTagTrees} trees - Fresh per-packet tag trees for the precinct.
+   * @returns {boolean} True if codeblock is included in this packet.
    */
-  _readInclusionBit(cx, cy, layerIdx, incTree) {
-    incTree.reset(cx, cy, layerIdx);
-    for (;;) {
-      if (incTree.isAboveThreshold()) {
+  _readInclusionHT(cx, cy, trees) {
+    for (let cl = trees.numLevels; cl > 0; cl--) {
+      const lev = cl - 1;
+      const nx = cx >> lev;
+      const ny = cy >> lev;
+      if (trees.incValue(nx, ny, lev) === 1) {
         return false;
       }
-      if (!incTree.isKnown()) {
-        if (this._readBit() === 0) {
-          incTree.incrementValue();
+      if (!trees.incFlagged(nx, ny, lev)) {
+        const bit = this._readBit();
+        trees.setInc(nx, ny, lev, 1 - bit, true);
+        if (bit === 0) {
           return false;
         }
-        incTree.setKnown();
       }
-      if (incTree.isLeaf()) {
-        return true;
-      }
-      incTree.nextLevel();
     }
+    return true;
   }
 
   /**
-   * Zero-bitplane tag-tree read: returns missing-MSBs count for codeblock (cx, cy).
+   * HTJ2K missing-MSBs (zero bitplane) tree read (fresh per-packet tree).
+   * At each level the counter is seeded from the parent node's value; if the
+   * current node has not been read yet, unary bits ("1" ends the run) extend
+   * the counter and the result is stored in the node. Mirrors OpenJPH
+   * precinct::parse missing-msbs walk.
    * @method
    * @private
    * @param {number} cx - Codeblock local x index.
    * @param {number} cy - Codeblock local y index.
-   * @param {TagTree} zeroTree - Zero-bitplane tag tree.
+   * @param {PacketTagTrees} trees - Fresh per-packet tag trees for the precinct.
    * @returns {number} Missing MSBs count.
    */
-  _readZeroBitplanes(cx, cy, zeroTree) {
-    zeroTree.reset(cx, cy);
-    while (zeroTree.value === undefined) {
-      if (this._readBit() === 0) {
-        zeroTree.incrementValue();
-      } else {
-        zeroTree.nextLevel();
+  _readMissingMSBsHT(cx, cy, trees) {
+    let mmsbs = 0;
+    for (let levp1 = trees.numLevels; levp1 > 0; levp1--) {
+      const lev = levp1 - 1;
+      const nx = cx >> lev;
+      const ny = cy >> lev;
+      // Parent node (level levp1) seeds the count for the current node.
+      mmsbs = trees.mmsbValue(cx >> levp1, cy >> levp1, levp1);
+      if (!trees.mmsbFlagged(nx, ny, lev)) {
+        let bit = 0;
+        while (bit === 0) {
+          bit = this._readBit();
+          mmsbs += 1 - bit;
+        }
+        trees.setMmsb(nx, ny, lev, mmsbs, true);
       }
     }
-    return zeroTree.value;
+    return mmsbs;
   }
 
   /**

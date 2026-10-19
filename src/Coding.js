@@ -295,16 +295,22 @@ class TileComponent {
       const precinctWidth = 1 << precinctSize.getWidth();
       const precinctHeight = 1 << precinctSize.getHeight();
 
+      // Precinct grid is anchored at absolute coordinate 0 (ITU-T T.800 B.6):
+      // precinct p covers [p*precinctWidth, (p+1)*precinctWidth). Rectangle
+      // "size" stores the absolute x1/y1, so the resolution-level range of
+      // precinct indices runs from floor(x0/precinctWidth) to ceil(x1/precinctWidth).
+      const rx0 = resolutionRect.getPoint().getX();
+      const ry0 = resolutionRect.getPoint().getY();
+      const rx1 = resolutionRect.getSize().getWidth();
+      const ry1 = resolutionRect.getSize().getHeight();
+      // OpenJPH counts precincts from the tile-grid origin (trx0 aligned
+      // down to the precinct grid) up to the absolute x1 boundary.
+      const precinctX0 = rx1 > rx0 ? Math.floor(rx0 / precinctWidth) : 0;
+      const precinctY0 = ry1 > ry0 ? Math.floor(ry0 / precinctHeight) : 0;
       const numPrecinctsWide =
-        resolutionRect.getSize().getWidth() > resolutionRect.getPoint().getX()
-          ? Math.ceil(resolutionRect.getSize().getWidth() / precinctWidth) -
-            Math.floor(resolutionRect.getPoint().getX() / precinctWidth)
-          : 0;
+        rx1 > rx0 ? Math.ceil(rx1 / precinctWidth) - Math.floor(rx0 / precinctWidth) : 0;
       const numPrecinctsHigh =
-        resolutionRect.getSize().getHeight() > resolutionRect.getPoint().getY()
-          ? Math.ceil(resolutionRect.getSize().getHeight() / precinctHeight) -
-            Math.floor(resolutionRect.getPoint().getY() / precinctHeight)
-          : 0;
+        ry1 > ry0 ? Math.ceil(ry1 / precinctHeight) - Math.floor(ry0 / precinctHeight) : 0;
 
       const precinctParams = {
         precinctWidth,
@@ -314,6 +320,12 @@ class TileComponent {
         numPrecinctsWide,
         numPrecinctsHigh,
         numPrecincts: numPrecinctsWide * numPrecinctsHigh,
+        precinctX0,
+        precinctY0,
+        resX0: rx0,
+        resY0: ry0,
+        resX1: rx1,
+        resY1: ry1,
       };
       const codeblockParams = {
         codeblockSize,
@@ -558,16 +570,72 @@ class SubBand {
       }
     }
 
-    // Convert precinct size from subband-sample units to codeblock-grid units
+    // Assign codeblocks to precincts. Precinct boundaries live on the
+    // resolution-level coordinate grid anchored at absolute 0 (T.800 B.6,
+    // matching OpenJPH subband::get_cb_indices): global precinct gx covers
+    // resolution samples [gx*precinctWidth, (gx+1)*precinctWidth). These
+    // boundaries are clipped to the resolution rectangle and mapped into
+    // this subband's sample coordinates (with the half-pixel shift of
+    // high-pass bands), and the codeblocks overlapping the result form the
+    // precinct's grid block. Slicing the codeblock grid directly (as done
+    // previously) is only correct when the resolution origin aligns with
+    // the precinct boundaries, which is not true in general.
+    const {
+      precinctWidth,
+      precinctHeight,
+      precinctX0 = Math.floor(x0 / precinctWidth),
+      precinctY0 = Math.floor(y0 / precinctHeight),
+      resX0 = x0,
+      resY0 = y0,
+      resX1 = x1,
+      resY1 = y1,
+    } = precinctParams;
+    const useResGrid = precinctParams.resX1 !== undefined;
+    // Legacy fallback (unit tests): slice the codeblock grid directly.
     const precCbsW = precinctWidthInSubBand >> cbLogW;
     const precCbsH = precinctHeightInSubBand >> cbLogH;
+    // Every subband of a multi-band resolution is downsampled 2x on both
+    // axes from the resolution grid (OpenJPH: x_shift = parent->has_horz_transform()).
+    // Parity is 1 for the high-pass side of the corresponding axis.
+    const xShift = this.subBandType === SubBandType.Ll ? 0 : 1;
+    const yShift = this.subBandType === SubBandType.Ll ? 0 : 1;
+    const xParity = this.subBandType === SubBandType.Hl || this.subBandType === SubBandType.Hh ? 1 : 0;
+    const yParity = this.subBandType === SubBandType.Lh || this.subBandType === SubBandType.Hh ? 1 : 0;
+    const mapBoundary = (v, parity, shift) =>
+      shift === 0 ? v : Math.floor((v - parity + ((1 << shift) - 1)) / (1 << shift));
 
     for (let py = 0; py < numPrecinctsHigh; py++) {
       for (let px = 0; px < numPrecinctsWide; px++) {
-        const cbOffX = px * precCbsW;
-        const cbOffY = py * precCbsH;
-        const cbsW = Math.min(precCbsW, totalCbsWide - cbOffX);
-        const cbsH = Math.min(precCbsH, totalCbsHigh - cbOffY);
+        let cbOffX;
+        let cbOffY;
+        let cbsW;
+        let cbsH;
+        if (useResGrid) {
+          const gy = precinctY0 + py;
+          const gx = precinctX0 + px;
+          const rbx0 = Math.max(resX0, gx * precinctWidth);
+          const rbx1 = Math.min(resX1, (gx + 1) * precinctWidth);
+          const rby0 = Math.max(resY0, gy * precinctHeight);
+          const rby1 = Math.min(resY1, (gy + 1) * precinctHeight);
+          const bx0 = mapBoundary(rbx0, xParity, xShift);
+          const bx1 = mapBoundary(rbx1, xParity, xShift);
+          const by0 = mapBoundary(rby0, yParity, yShift);
+          const by1 = mapBoundary(rby1, yParity, yShift);
+
+          const a0 = Math.max(cbGridX0, Math.floor(bx0 / cbW));
+          const a1 = Math.min(cbGridX1, Math.ceil(bx1 / cbW));
+          const b0 = Math.max(cbGridY0, Math.floor(by0 / cbH));
+          const b1 = Math.min(cbGridY1, Math.ceil(by1 / cbH));
+          cbOffX = a0 - cbGridX0;
+          cbOffY = b0 - cbGridY0;
+          cbsW = a1 - a0;
+          cbsH = b1 - b0;
+        } else {
+          cbOffX = px * precCbsW;
+          cbOffY = py * precCbsH;
+          cbsW = Math.min(precCbsW, totalCbsWide - cbOffX);
+          cbsH = Math.min(precCbsH, totalCbsHigh - cbOffY);
+        }
         if (cbsW > 0 && cbsH > 0) {
           this.precincts.push({
             px,

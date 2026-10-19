@@ -17,6 +17,12 @@ class Wavelet {
     this._bound1dIrv97 = this._iDwt1dIrv97.bind(this);
     this._bound1dRev53Offset = this._iDwt1dRev53Offset.bind(this);
     this._bound1dIrv97Offset = this._iDwt1dIrv97Offset.bind(this);
+    this._bound1dCas1Rev53 = (l, lo, h, ho, ll, hl, out, oo) =>
+      this._iDwt1dCas1(l, lo, h, ho, ll, hl, out, oo, true);
+    this._bound1dCas1Irv97 = (l, lo, h, ho, ll, hl, out, oo) =>
+      this._iDwt1dCas1(l, lo, h, ho, ll, hl, out, oo, false);
+    this._vColL = new Float64Array(0);
+    this._vColH = new Float64Array(0);
     // Reusable buffers for 2D transform
     this._rowL = new Float64Array(0);
     this._rowH = new Float64Array(0);
@@ -49,25 +55,72 @@ class Wavelet {
       return new Float64Array(0);
     }
 
-    let current = resolutions[0].ll;
+    // Seed from the coarsest resolution carrying LL samples. When no
+    // resolution has a non-empty LL (zero-area coarsest rects or entirely
+    // skipped low band), bootstrap at the first non-degenerate resolution
+    // with an implicit all-zero low band and run that level too.
+    let current = null;
+    let start = 0;
+    for (let r = 0; r < numLevels; r++) {
+      const res = resolutions[r];
+      if (res.ll && res.ll.length > 0 && res.width > 0 && res.height > 0) {
+        current = res.ll;
+        start = r + 1;
+        break;
+      }
+    }
+    let seedLevel = -1;
+    if (current === null) {
+      for (let r = 0; r < numLevels; r++) {
+        const res = resolutions[r];
+        if (res.width > 0 && res.height > 0) {
+          const cx = (res.x0 & 1) === 1 ? 1 : 0;
+          const cy = (res.y0 & 1) === 1 ? 1 : 0;
+          const lw = cx === 0 ? Math.ceil(res.width / 2) : Math.floor(res.width / 2);
+          const lh = cy === 0 ? Math.ceil(res.height / 2) : Math.floor(res.height / 2);
+          current = new Float64Array(lw * lh);
+          start = r;
+          seedLevel = r;
+          break;
+        }
+      }
+      if (current === null) {
+        return new Float64Array(0);
+      }
+    }
 
-    for (let r = 1; r < numLevels; r++) {
+    for (let r = seedLevel >= 0 ? seedLevel : start; r < numLevels; r++) {
       const res = resolutions[r];
       const resW = res.width;
       const resH = res.height;
-      const lWid = Math.ceil(resW / 2);
-      const lHgt = Math.ceil(resH / 2);
-      const hWid = Math.floor(resW / 2);
-      const hHgt = Math.floor(resH / 2);
+      if (resW <= 0 || resH <= 0) {
+        continue;
+      }
+      const casX = (res.x0 & 1) === 1 ? 1 : 0;
+      const casY = (res.y0 & 1) === 1 ? 1 : 0;
+      const lWid = casX === 0 ? Math.ceil(resW / 2) : Math.floor(resW / 2);
+      const hWid = resW - lWid;
+      const lHgt = casY === 0 ? Math.ceil(resH / 2) : Math.floor(resH / 2);
+      const hHgt = resH - lHgt;
+      const hlW = res.hlW !== undefined ? res.hlW : hWid;
+      const hlH = res.hlH !== undefined ? res.hlH : lHgt;
+      const lhW = res.lhW !== undefined ? res.lhW : lWid;
+      const lhH = res.lhH !== undefined ? res.lhH : hHgt;
 
       current = this._iDwt2dLevel(
         current,
-        res.hl || new Float64Array(hWid * lHgt),
-        res.lh || new Float64Array(lWid * hHgt),
+        res.hl || new Float64Array(hlW * hlH),
+        res.lh || new Float64Array(lhW * lhH),
         res.hh || new Float64Array(hWid * hHgt),
         resW,
         resH,
-        isReversible
+        isReversible,
+        casX,
+        casY,
+        hlW,
+        hlH,
+        lhW,
+        lhH
       );
     }
 
@@ -90,7 +143,13 @@ class Wavelet {
       return;
     }
     if (hLen === 0) {
-      out[0] = l[0];
+      for (let n = 0; n < lLen; n++) {
+        out[2 * n] = l[n];
+      }
+      return;
+    }
+    if (lLen === 0) {
+      out[0] = h[0] / 2;
       return;
     }
 
@@ -134,7 +193,9 @@ class Wavelet {
       return;
     }
     if (hLen === 0) {
-      out[0] = l[0];
+      for (let n = 0; n < lLen; n++) {
+        out[2 * n] = l[n];
+      }
       return;
     }
 
@@ -199,8 +260,16 @@ class Wavelet {
     if (lLen + hLen === 0) {
       return;
     }
+    const st = stride === undefined ? 1 : stride;
     if (hLen === 0) {
-      out[outOff] = lSrc[lOff];
+      for (let n = 0; n < lLen; n++) {
+        out[outOff + st * (2 * n)] = lSrc[lOff + n];
+      }
+      return;
+    }
+    if (lLen === 0) {
+      // Single high sample (length-1 span): the 5/3 synthesizer halves it.
+      out[outOff] = Math.floor(hSrc[hOff] / 2);
       return;
     }
 
@@ -208,7 +277,6 @@ class Wavelet {
       this._scratchLw = new Float64Array(lLen);
     }
     const lw = this._scratchLw;
-    const st = stride === undefined ? 1 : stride;
 
     // lLen >= 1 and hLen >= 1 here; hLen is lLen or lLen - 1.
     // Update low band: lw[n] = l[n] - ((h[n-1] + h[n] + 2) >> 2) with
@@ -259,7 +327,15 @@ class Wavelet {
       return;
     }
     if (hLen === 0) {
-      out[outOff] = lSrc[lOff];
+      for (let n = 0; n < lLen; n++) {
+        out[outOff + 2 * n] = lSrc[lOff + n];
+      }
+      return;
+    }
+    if (lLen === 0) {
+      // Single high sample: OpenJPEG's 9/7 decode is gated off for this
+      // degenerate case, so the sample passes through unmodified.
+      out[outOff] = hSrc[hOff];
       return;
     }
 
@@ -331,6 +407,115 @@ class Wavelet {
   }
 
   /**
+   * Odd-origin (code-alternating-synthesis == 1) 1-D inverse transform with
+   * per-sample arithmetic matching OpenJPEG's cas=1 paths: highs at even
+   * positions (2j), lows at odd positions (2j+1). Low lifting taps the highs
+   * at the same and next index; high lifting taps the lows at the same and
+   * previous index, with clamp-repeat edge extension.
+   * @method
+   * @private
+   * @param {Float64Array} lSrc - Low-band samples source array.
+   * @param {number} lOff - Offset of low-band samples in source array.
+   * @param {Float64Array} hSrc - High-band samples source array.
+   * @param {number} hOff - Offset of high-band samples in source array.
+   * @param {number} lLen - Number of low-band samples.
+   * @param {number} hLen - Number of high-band samples.
+   * @param {Float64Array} out - Output array of length (outOff - outOff + lLen + hLen).
+   * @param {number} outOff - Offset for output samples in output array.
+   * @param {boolean} isReversible - true for 5/3, false for 9/7.
+   */
+  _iDwt1dCas1(lSrc, lOff, hSrc, hOff, lLen, hLen, out, outOff, isReversible) {
+    if (lLen + hLen === 0) {
+      return;
+    }
+    if (lLen === 0) {
+      // OpenJPEG cas=1: 5/3 with a single high divides it by two; the 9/7
+      // decode is gated off and leaves the sample unmodified. Truncated
+      // multi-high rows get the plain deinterleave.
+      if (!isReversible && hLen === 1) {
+        out[outOff] = hSrc[hOff];
+        return;
+      }
+      for (let n = 0; n < hLen; n++) {
+        const v = hLen === 1 ? Math.floor(hSrc[hOff + n] / 2) : hSrc[hOff + n];
+        out[outOff + 2 * n] = v;
+      }
+      return;
+    }
+    if (hLen === 0) {
+      for (let n = 0; n < lLen; n++) {
+        out[outOff + 2 * n + 1] = lSrc[lOff + n];
+      }
+      return;
+    }
+
+    if (this._scratchLw.length < lLen) {
+      this._scratchLw = new Float64Array(lLen);
+    }
+    if (this._scratchHw.length < hLen) {
+      this._scratchHw = new Float64Array(hLen);
+    }
+    const lw = this._scratchLw;
+    const hw = this._scratchHw;
+    // Clamp-repeat taps into the opposite band ([0, hLen-1] for low updates,
+    // [0, lLen-1] for high updates).
+    const cH = (i) => (i < 0 ? 0 : (i >= hLen ? hLen - 1 : i));
+    const cL = (i) => (i < 0 ? 0 : (i >= lLen ? lLen - 1 : i));
+
+    if (isReversible) {
+      const lBase = lOff, hBase = hOff;
+      for (let j = 0; j < lLen; j++) {
+        lw[j] = lSrc[lBase + j] -
+          ((hSrc[hBase + cH(j)] + hSrc[hBase + cH(j + 1)] + 2) >> 2);
+      }
+      for (let j = 0; j < hLen; j++) {
+        out[outOff + 2 * j] = hSrc[hBase + j] +
+          ((lw[cL(j)] + lw[cL(j - 1)]) >> 1);
+      }
+      for (let j = 0; j < lLen; j++) {
+        out[outOff + 2 * j + 1] = lw[j];
+      }
+      return;
+    }
+
+    const K = this.CDF97_K;
+    const invK = this.CDF97_INV_K;
+    const delta = this.CDF97_DELTA;
+    const gamma = this.CDF97_GAMMA;
+    const beta = this.CDF97_BETA;
+    const alpha = this.CDF97_ALPHA;
+
+    for (let j = 0; j < lLen; j++) {
+      lw[j] = lSrc[lOff + j] * K;
+    }
+    for (let j = 0; j < hLen; j++) {
+      hw[j] = hSrc[hOff + j] * invK;
+    }
+    // Delta on lows (taps: hw[j], hw[j+1], clamped)
+    for (let j = 0; j < lLen; j++) {
+      lw[j] -= delta * (hw[cH(j)] + hw[cH(j + 1)]);
+    }
+    // Gamma on highs (taps: lw[j-1], lw[j], clamped)
+    for (let j = 0; j < hLen; j++) {
+      hw[j] -= gamma * (lw[cL(j - 1)] + lw[cL(j)]);
+    }
+    // Beta on lows (taps as delta, on updated highs)
+    for (let j = 0; j < lLen; j++) {
+      lw[j] -= beta * (hw[cH(j)] + hw[cH(j + 1)]);
+    }
+    // Alpha on highs (taps as gamma, on updated lows)
+    for (let j = 0; j < hLen; j++) {
+      hw[j] -= alpha * (lw[cL(j - 1)] + lw[cL(j)]);
+    }
+    for (let j = 0; j < hLen; j++) {
+      out[outOff + 2 * j] = hw[j];
+    }
+    for (let j = 0; j < lLen; j++) {
+      out[outOff + 2 * j + 1] = lw[j];
+    }
+  }
+
+  /**
    * Apply 2D inverse DWT for one resolution level.
    * @method
    * @private
@@ -341,18 +526,38 @@ class Wavelet {
    * @param {number} resW - Target resolution width.
    * @param {number} resH - Target resolution height.
    * @param {boolean} isReversible - true for 5/3, false for 9/7.
+   * @param {number} casX - Horizontal parity of the source resolution (0|1).
+   * @param {number} casY - Vertical parity of the source resolution (0|1).
+   * @param {number} hlW - Actual HL band width (defaults to low width).
+   * @param {number} hlH - Actual HL band height (defaults to low height).
+   * @param {number} lhW - Actual LH band width (defaults to high width).
+   * @param {number} lhH - Actual LH band height (defaults to high height).
    * @returns {Float64Array}
    */
-  _iDwt2dLevel(llBuf, hlBuf, lhBuf, hhBuf, resW, resH, isReversible) {
-    const idwt1dOff = isReversible ? this._bound1dRev53Offset : this._bound1dIrv97Offset;
+  _iDwt2dLevel(llBuf, hlBuf, lhBuf, hhBuf, resW, resH, isReversible,
+    casX = 0, casY = 0, hlW = 0, hlH = 0, lhW = 0, lhH = 0) {
+    // Band sizes follow from the resolution parity (Paraschiva §3.4): odd
+    // origins swap the ceil/floor split so that HL/LH keep the even (low)
+    // row/column origin. Actual band dimensions from the code-stream
+    // rectangles are used when provided (truncated bands).
+    const lWid = (casX === 0) ? Math.ceil(resW / 2) : Math.floor(resW / 2);
+    const lHgt = (casY === 0) ? Math.ceil(resH / 2) : Math.floor(resH / 2);
+    const hWid = resW - lWid;
+    const hHgt = resH - lHgt;
+    // HL is high-in-x / low-in-y; LH is low-in-x / high-in-y.
+    const hlBW = hlW || hWid;
+    const hlBH = hlH || lHgt;
+    const lhBW = lhW || lWid;
+    const lhBH = lhH || hHgt;
+
+    const idwt1d = (casX === 0)
+      ? (isReversible ? this._bound1dRev53Offset : this._bound1dIrv97Offset)
+      : (isReversible ? this._bound1dCas1Rev53 : this._bound1dCas1Irv97);
+
     const out = new Float64Array(resW * resH);
 
-    const lWid = Math.ceil(resW / 2);
-    const hWid = Math.floor(resW / 2);
-    const lHgt = Math.ceil(resH / 2);
-    const hHgt = Math.floor(resH / 2);
-
-    // Reuse vertical intermediate buffers
+    // Reuse vertical intermediate buffers (zero-filled: truncated rows may
+    // leave trailing samples unwritten by the horizontal pass).
     if (this._vertL.length < lHgt * resW) {
       this._vertL = new Float64Array(lHgt * resW);
     }
@@ -361,23 +566,32 @@ class Wavelet {
     }
     const vertL = this._vertL;
     const vertH = this._vertH;
+    vertL.fill(0, 0, lHgt * resW);
+    vertH.fill(0, 0, hHgt * resW);
 
-    // Horizontal transform — write directly to vertL/vertH (no intermediate copies)
+    // Horizontal transform — row y of vertL interleaves row y of LL (lows)
+    // with row y of HL (highs); row y of vertH interleaves LH and HH.
     for (let y = 0; y < lHgt; y++) {
-      idwt1dOff(llBuf, y * lWid, hlBuf, y * hWid, lWid, hWid, vertL, y * resW);
+      const hLen = y < hlBH ? hlBW : 0;
+      idwt1d(llBuf, y * lWid, hlBuf, y * hlBW, lWid, hLen, vertL, y * resW);
     }
     for (let y = 0; y < hHgt; y++) {
-      idwt1dOff(lhBuf, y * lWid, hhBuf, y * hWid, lWid, hWid, vertH, y * resW);
+      const lLen = y < lhBH ? lhBW : 0;
+      idwt1d(lhBuf, y * lhBW, hhBuf, y * hWid, lLen, hWid, vertH, y * resW);
     }
 
     // Vertical transform — streamed row by row. Columns are independent, so
     // lifting can operate on whole rows directly with a small rolling window,
     // reading vertL/vertH rows sequentially and writing contiguous output
     // rows. This avoids the transposed-block staging entirely.
-    if (isReversible) {
-      this._iDwtVerticalRev53(vertL, vertH, lHgt, hHgt, resW, out);
+    if (casY === 0) {
+      if (isReversible) {
+        this._iDwtVerticalRev53(vertL, vertH, lHgt, hHgt, resW, out);
+      } else {
+        this._iDwtVerticalIrv97(vertL, vertH, lHgt, hHgt, resW, out);
+      }
     } else {
-      this._iDwtVerticalIrv97(vertL, vertH, lHgt, hHgt, resW, out);
+      this._iDwtVerticalCas1(vertL, vertH, lHgt, hHgt, resW, out, isReversible);
     }
 
     return out;
@@ -591,6 +805,102 @@ class Wavelet {
         const l2 = l1p[x] - beta * (hPend[x] + hPend[x]);
         out[emitLow + x] = l2;
         out[emitHigh + x] = hPend[x] - alpha * (l2Prv[x] + l2);
+      }
+    }
+  }
+
+  /**
+   * Odd-origin (cas == 1) vertical inverse transform, column-at-a-time with
+   * the same lifting equations as _iDwt1dCas1: high row j emitted at output
+   * row 2j and low row j at 2j+1. Correctness-first multi-pass version.
+   * @method
+   * @private
+   * @param {Float64Array} vertL - Low vertical band, lHgt rows of resW.
+   * @param {Float64Array} vertH - High vertical band, hHgt rows of resW.
+   * @param {number} lHgt - Number of low rows.
+   * @param {number} hHgt - Number of high rows.
+   * @param {number} resW - Row width.
+   * @param {Float64Array} out - Output rows buffer (resH × resW).
+   * @param {boolean} isReversible - true for 5/3, false for 9/7.
+   */
+  _iDwtVerticalCas1(vertL, vertH, lHgt, hHgt, resW, out, isReversible) {
+    if (hHgt === 0) {
+      return;
+    }
+    if (lHgt === 0) {
+      // Single high row (resH === 1): 5/3 halves the samples, 9/7 decode is
+      // gated off and leaves them unmodified (matches _iDwt1dCas1).
+      if (isReversible && hHgt === 1) {
+        for (let x = 0; x < resW; x++) {
+          out[x] = Math.floor(vertH[x] / 2);
+        }
+      } else {
+        out.set(vertH.subarray(0, hHgt * resW), 0);
+      }
+      return;
+    }
+
+    const K = this.CDF97_K;
+    const invK = this.CDF97_INV_K;
+    const delta = this.CDF97_DELTA;
+    const gamma = this.CDF97_GAMMA;
+    const beta = this.CDF97_BETA;
+    const alpha = this.CDF97_ALPHA;
+
+    if (this._vColL.length < lHgt) {
+      this._vColL = new Float64Array(lHgt);
+    }
+    if (this._vColH.length < hHgt) {
+      this._vColH = new Float64Array(hHgt);
+    }
+    const lw = this._vColL;
+    const hw = this._vColH;
+
+    for (let x = 0; x < resW; x++) {
+      for (let j = 0; j < lHgt; j++) {
+        lw[j] = vertL[j * resW + x];
+      }
+      for (let j = 0; j < hHgt; j++) {
+        hw[j] = vertH[j * resW + x];
+      }
+      const cH = (i) => (i < 0 ? 0 : (i >= hHgt ? hHgt - 1 : i));
+      const cL = (i) => (i < 0 ? 0 : (i >= lHgt ? lHgt - 1 : i));
+
+      if (isReversible) {
+        for (let j = 0; j < lHgt; j++) {
+          lw[j] -= (hw[cH(j)] + hw[cH(j + 1)] + 2) >> 2;
+        }
+        for (let j = 0; j < hHgt; j++) {
+          out[(2 * j) * resW + x] = hw[j] + ((lw[cL(j)] + lw[cL(j - 1)]) >> 1);
+        }
+        for (let j = 0; j < lHgt; j++) {
+          out[(2 * j + 1) * resW + x] = lw[j];
+        }
+      } else {
+        for (let j = 0; j < lHgt; j++) {
+          lw[j] *= K;
+        }
+        for (let j = 0; j < hHgt; j++) {
+          hw[j] *= invK;
+        }
+        for (let j = 0; j < lHgt; j++) {
+          lw[j] -= delta * (hw[cH(j)] + hw[cH(j + 1)]);
+        }
+        for (let j = 0; j < hHgt; j++) {
+          hw[j] -= gamma * (lw[cL(j - 1)] + lw[cL(j)]);
+        }
+        for (let j = 0; j < lHgt; j++) {
+          lw[j] -= beta * (hw[cH(j)] + hw[cH(j + 1)]);
+        }
+        for (let j = 0; j < hHgt; j++) {
+          hw[j] -= alpha * (lw[cL(j - 1)] + lw[cL(j)]);
+        }
+        for (let j = 0; j < hHgt; j++) {
+          out[(2 * j) * resW + x] = hw[j];
+        }
+        for (let j = 0; j < lHgt; j++) {
+          out[(2 * j + 1) * resW + x] = lw[j];
+        }
       }
     }
   }

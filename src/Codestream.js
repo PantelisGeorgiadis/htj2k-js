@@ -4,6 +4,7 @@ const {
   ComSegment,
   NltSegment,
   PpmSegment,
+  QccSegment,
   QcdSegment,
   Segment,
   SizSegment,
@@ -97,6 +98,9 @@ class Codestream {
         segment.parse();
       } else if (marker === Marker.Qcd) {
         segment = new QcdSegment(position, data);
+        segment.parse();
+      } else if (marker === Marker.Qcc) {
+        segment = new QccSegment(position, data);
         segment.parse();
       } else if (marker === Marker.Tlm) {
         segment = new TlmSegment(position, data);
@@ -218,6 +222,8 @@ class Codestream {
         // Read segments inside tile part
         let sodFound = false;
         let sodPosition = -1;
+        let tileQcd = undefined;
+        const tileQccs = [];
         for (;;) {
           const { position, marker, data } = this._readNextSegment();
           if (position === -1 && marker === -1) {
@@ -236,7 +242,19 @@ class Codestream {
             break;
           }
 
-          const segment = new Segment(marker, position, data);
+          // Per-tile quantization segments override the main header values
+          let segment;
+          if (marker === Marker.Qcd) {
+            segment = new QcdSegment(position, data);
+            segment.parse();
+            tileQcd = segment;
+          } else if (marker === Marker.Qcc) {
+            segment = new QccSegment(position, data);
+            segment.parse();
+            tileQccs.push(segment);
+          } else {
+            segment = new Segment(marker, position, data);
+          }
           this._addSegment(segment);
         }
 
@@ -251,7 +269,11 @@ class Codestream {
         if (!tile) {
           throw new Error(`Couldn't find tile with index ${sotSegment.getTileIndex()}`);
         }
-        tile.addTilePart(new TilePart(sotSegment, sodPosition));
+        const tilePart = new TilePart(sotSegment, sodPosition);
+        // Per-tile quantization overrides are picked up during decoding
+        tilePart.qcd = tileQcd;
+        tilePart.qccs = tileQccs;
+        tile.addTilePart(tilePart);
 
         // Jump to next tile part
         const tileEndPosition = tileStartPosition + sotSegment.getPayloadLength();
@@ -264,6 +286,36 @@ class Codestream {
 
   //#region Private Methods
   /**
+   * Builds the effective QCD-equivalent quantization for one component of a
+   * tile. Tile-part QCD/QCC segments override the main header values for the
+   * tile (ISO/IEC 15444-1 B.10, non-PSQCD mode).
+   * @method
+   * @private
+   * @param {QcdSegment|undefined} tileQcd - Tile-part QCD segment, if any.
+   * @param {Array<QccSegment>} tileQccs - Tile-part QCC segments, if any.
+   * @param {number} component - Component index.
+   * @param {Object} mainComponentQcd - Main-header effective QCD for the
+   * component (main QCD, or main QCC if present).
+   * @returns {Object} The effective quantization segment for the component.
+   */
+  _resolveQcdForComponent(tileQcd, tileQccs, component, mainComponentQcd) {
+    if (!tileQcd) {
+      for (const qcc of tileQccs || []) {
+        if (qcc.getComponent() === component) {
+          return qcc;
+        }
+      }
+      return mainComponentQcd;
+    }
+    for (const qcc of tileQccs || []) {
+      if (qcc.getComponent() === component) {
+        return qcc;
+      }
+    }
+    return tileQcd;
+  }
+
+  /**
    * Finds the NLT segment that applies to a given component, if any.
    * Per-component NLTs take precedence over global (Cnlt = 0xFFFF) NLTs.
    * @method
@@ -271,8 +323,7 @@ class Codestream {
    * @param {number} component - Component index.
    * @returns {NltSegment|undefined} Matching NLT segment, or undefined.
    */
-  _findNltSegment(component) {
-    let global;
+  _findNltSegment(component) {    let global;
     for (const s of this.segments) {
       if (s.getMarker() !== Marker.Nlt) {
         continue;
@@ -367,9 +418,82 @@ class Codestream {
     const ppmActive = ppmBuffer.byteLength > 0;
     let ppmCursor = 0;
 
+    // Per-component main-header effective QCD (QCC overrides QCD per spec B.10).
+    // Tile-part QCD/QCC segments override these during the tile loop below.
+    const mainQcds = [];
+    for (let c = 0; c < numComponents; c++) {
+      let compQcd = qcd;
+      for (const s of this.segments) {
+        if (s.getMarker() === Marker.Qcc && s.getComponent && s.getComponent() === c) {
+          compQcd = s;
+          break;
+        }
+      }
+      mainQcds.push(compQcd);
+    }
+
     for (const tile of this.tiles) {
+      // Effective quantization per component: main-header QCC overrides the
+      // main QCD; tile-part QCD/QCC segments override both for this tile.
+      const effectiveQcds = mainQcds.slice();
+
+      // Position-anchored progressions (RPCL/PCRL/CPRL) require per
+      // (component, resolution) cursors that walk each resolution's own
+      // precinct grid in raster order and persist across tile-parts, exactly
+      // like OpenJPH's cur_precinct_loc. At each step the next packet
+      // position is the head precinct with the smallest projected
+      // full-resolution (y, x) top-left, ties broken by scan order
+      // (component, then resolution).
+      const progCursors = tile.tileComponents.map((tc) =>
+        tc.resolutions.map(() => ({ x: 0, y: 0 }))
+      );
+      const progTileX0 = tile.getTileRectangle().getPoint().getX();
+      const progTileY0 = tile.getTileRectangle().getPoint().getY();
+      const peekProgPrecinct = (c, r) => {
+        const tc = tile.tileComponents[c];
+        const resolution = tc.resolutions[r];
+        if (!resolution) {
+          return null;
+        }
+        const pp = resolution.getPrecinctParameters();
+        const cur = progCursors[c][r];
+        const idx = cur.y * pp.numPrecinctsWide + cur.x;
+        if (pp.numPrecincts === 0 || idx >= pp.numPrecincts) {
+          return null;
+        }
+        const decomp = tc.getCodingStyleParameters().getDecompositionLevels();
+        const scale = 1 << (decomp - r);
+        const ppx0 = (pp.precinctX0 + cur.x) * pp.precinctWidth;
+        const ppy0 = (pp.precinctY0 + cur.y) * pp.precinctHeight;
+        return {
+          x: Math.max(
+            progTileX0,
+            ppx0 * scale * tc.getSubSamplingX()
+          ),
+          y: Math.max(progTileY0, ppy0 * scale * tc.getSubSamplingY()),
+          idx
+        };
+      };
+
       // Read packets according to progression order
       for (const tilePart of tile.tileParts) {
+        if (tilePart.qcd) {
+          for (let c = 0; c < numComponents; c++) {
+            effectiveQcds[c] = this._resolveQcdForComponent(
+              tilePart.qcd,
+              tilePart.qccs,
+              c,
+              mainQcds[c]
+            );
+          }
+        } else if (tilePart.qccs && tilePart.qccs.length) {
+          for (const qcc of tilePart.qccs) {
+            if (qcc.getComponent() < numComponents) {
+              effectiveQcds[qcc.getComponent()] = qcc;
+            }
+          }
+        }
+
         const dataStart = tilePart.sodPosition + 2; // SOD marker is 2 bytes
         const dataEnd = tilePart.sotSegment.getPosition() + tilePart.sotSegment.getTilePartLength();
         let pos = dataStart;
@@ -434,89 +558,147 @@ class Codestream {
         } else if (progressionOrder === ProgressionOrder.Rpcl) {
           // Resolution-Position-Component-Layer
           for (let r = 0; r <= decompositionLevels; r++) {
-            let maxH = 0;
-            let maxW = 0;
-            for (let c = 0; c < numComponents; c++) {
-              const pp = tile.tileComponents[c].resolutions[r].getPrecinctParameters();
-              maxH = Math.max(maxH, pp.numPrecinctsHigh);
-              maxW = Math.max(maxW, pp.numPrecinctsWide);
-            }
-            for (let py = 0; py < maxH; py++) {
-              for (let px = 0; px < maxW; px++) {
-                for (let c = 0; c < numComponents; c++) {
-                  const resolution = tile.tileComponents[c].resolutions[r];
-                  const pp = resolution.getPrecinctParameters();
-                  const p = py * pp.numPrecinctsWide + px;
-                  if (p >= pp.numPrecincts) {
-                    continue;
-                  }
-                  for (let l = 0; l < qualityLayers; l++) {
-                    if (this.packetReader.isExhausted(pos, dataEnd)) {
-                      break;
-                    }
-                    pos = this.packetReader.readPacket(buffer, pos, dataEnd, l, resolution, p, cod);
-                  }
+            for (;;) {
+              let best = null;
+              let bestC = -1;
+              for (let c = 0; c < numComponents; c++) {
+                const cand = peekProgPrecinct(c, r);
+                if (!cand) {
+                  continue;
                 }
+                if (
+                  !best ||
+                  cand.y < best.y ||
+                  (cand.y === best.y && cand.x < best.x)
+                ) {
+                  best = cand;
+                  bestC = c;
+                }
+              }
+              if (!best) {
+                break;
+              }
+              const resolution =
+                tile.tileComponents[bestC].resolutions[r];
+              const pp = resolution.getPrecinctParameters();
+              const cur = progCursors[bestC][r];
+              for (let l = 0; l < qualityLayers; l++) {
+                if (this.packetReader.isExhausted(pos, dataEnd)) {
+                  break;
+                }
+                pos = this.packetReader.readPacket(
+                  buffer,
+                  pos,
+                  dataEnd,
+                  l,
+                  resolution,
+                  best.idx,
+                  cod
+                );
+              }
+              if (++cur.x >= pp.numPrecinctsWide) {
+                cur.x = 0;
+                cur.y++;
               }
             }
           }
         } else if (progressionOrder === ProgressionOrder.Pcrl) {
           // Position-Component-Resolution-Layer
-          let maxH = 0;
-          let maxW = 0;
-          for (let c = 0; c < numComponents; c++) {
-            for (let r = 0; r <= decompositionLevels; r++) {
-              const pp = tile.tileComponents[c].resolutions[r].getPrecinctParameters();
-              maxH = Math.max(maxH, pp.numPrecinctsHigh);
-              maxW = Math.max(maxW, pp.numPrecinctsWide);
-            }
-          }
-          for (let py = 0; py < maxH; py++) {
-            for (let px = 0; px < maxW; px++) {
-              for (let c = 0; c < numComponents; c++) {
-                for (let r = 0; r <= decompositionLevels; r++) {
-                  const resolution = tile.tileComponents[c].resolutions[r];
-                  const pp = resolution.getPrecinctParameters();
-                  const p = py * pp.numPrecinctsWide + px;
-                  if (p >= pp.numPrecincts) {
-                    continue;
-                  }
-                  for (let l = 0; l < qualityLayers; l++) {
-                    if (this.packetReader.isExhausted(pos, dataEnd)) {
-                      break;
-                    }
-                    pos = this.packetReader.readPacket(buffer, pos, dataEnd, l, resolution, p, cod);
-                  }
+          for (;;) {
+            let best = null;
+            let bestC = -1;
+            let bestR = -1;
+            for (let c = 0; c < numComponents; c++) {
+              for (let r = 0; r <= decompositionLevels; r++) {
+                const cand = peekProgPrecinct(c, r);
+                if (!cand) {
+                  continue;
+                }
+                if (
+                  !best ||
+                  cand.y < best.y ||
+                  (cand.y === best.y && cand.x < best.x) ||
+                  (cand.y === best.y && cand.x === best.x && c < bestC) ||
+                  (cand.y === best.y &&
+                    cand.x === best.x &&
+                    c === bestC &&
+                    r < bestR)
+                ) {
+                  best = cand;
+                  bestC = c;
+                  bestR = r;
                 }
               }
+            }
+            if (!best) {
+              break;
+            }
+            const resolution =
+              tile.tileComponents[bestC].resolutions[bestR];
+            const pp = resolution.getPrecinctParameters();
+            const cur = progCursors[bestC][bestR];
+            for (let l = 0; l < qualityLayers; l++) {
+              if (this.packetReader.isExhausted(pos, dataEnd)) {
+                break;
+              }
+              pos = this.packetReader.readPacket(
+                buffer,
+                pos,
+                dataEnd,
+                l,
+                resolution,
+                best.idx,
+                cod
+              );
+            }
+            if (++cur.x >= pp.numPrecinctsWide) {
+              cur.x = 0;
+              cur.y++;
             }
           }
         } else if (progressionOrder === ProgressionOrder.Cprl) {
           // Component-Position-Resolution-Layer
           for (let c = 0; c < numComponents; c++) {
-            let maxH = 0;
-            let maxW = 0;
-            for (let r = 0; r <= decompositionLevels; r++) {
-              const pp = tile.tileComponents[c].resolutions[r].getPrecinctParameters();
-              maxH = Math.max(maxH, pp.numPrecinctsHigh);
-              maxW = Math.max(maxW, pp.numPrecinctsWide);
-            }
-            for (let py = 0; py < maxH; py++) {
-              for (let px = 0; px < maxW; px++) {
-                for (let r = 0; r <= decompositionLevels; r++) {
-                  const resolution = tile.tileComponents[c].resolutions[r];
-                  const pp = resolution.getPrecinctParameters();
-                  const p = py * pp.numPrecinctsWide + px;
-                  if (p >= pp.numPrecincts) {
-                    continue;
-                  }
-                  for (let l = 0; l < qualityLayers; l++) {
-                    if (this.packetReader.isExhausted(pos, dataEnd)) {
-                      break;
-                    }
-                    pos = this.packetReader.readPacket(buffer, pos, dataEnd, l, resolution, p, cod);
-                  }
+            for (;;) {
+              let best = null;
+              let bestR = -1;
+              for (let r = 0; r <= decompositionLevels; r++) {
+                const cand = peekProgPrecinct(c, r);
+                if (!cand) {
+                  continue;
                 }
+                if (
+                  !best ||
+                  cand.y < best.y ||
+                  (cand.y === best.y && cand.x < best.x)
+                ) {
+                  best = cand;
+                  bestR = r;
+                }
+              }
+              if (!best) {
+                break;
+              }
+              const resolution = tile.tileComponents[c].resolutions[bestR];
+              const pp = resolution.getPrecinctParameters();
+              const cur = progCursors[c][bestR];
+              for (let l = 0; l < qualityLayers; l++) {
+                if (this.packetReader.isExhausted(pos, dataEnd)) {
+                  break;
+                }
+                pos = this.packetReader.readPacket(
+                  buffer,
+                  pos,
+                  dataEnd,
+                  l,
+                  resolution,
+                  best.idx,
+                  cod
+                );
+              }
+              if (++cur.x >= pp.numPrecinctsWide) {
+                cur.x = 0;
+                cur.y++;
               }
             }
           }
@@ -529,7 +711,8 @@ class Codestream {
       for (let c = 0; c < numComponents; c++) {
         const tc = tile.tileComponents[c];
         const bitDepth = tc.getBitDepth();
-        //const guardBits = qcd.quantizationStyle >> 5;
+        const compQcd = effectiveQcds[c];
+        //guardBits = compQcd.quantizationStyle >> 5;
 
         // Build resolutions array for idwt2d
         // resolutions[0] holds LL; resolutions[r>0] holds HL/LH/HH
@@ -544,8 +727,8 @@ class Codestream {
           const llW = llBand.subBandRect.getSize().getWidth() - llSx0;
           const llH = llBand.subBandRect.getSize().getHeight() - llSy0;
           const llBuf = new Float64Array(Math.max(llW * llH, 0));
-          this._assembleBand(llBand, llBuf, llW, llSx0, llSy0, qcd, 0, isReversible, bitDepth);
-          resolutionsForIDWT.push({ width: llW, height: llH, ll: llBuf });
+          this._assembleBand(llBand, llBuf, llW, llSx0, llSy0, compQcd, 0, isReversible, bitDepth);
+          resolutionsForIDWT.push({ width: llW, height: llH, ll: llBuf, x0: llSx0, y0: llSy0 });
         }
 
         // Higher resolutions (HL / LH / HH subbands)
@@ -591,7 +774,7 @@ class Codestream {
             hlW,
             hlSx0,
             hlSy0,
-            qcd,
+            compQcd,
             bandIdxHl,
             isReversible,
             bitDepth
@@ -602,7 +785,7 @@ class Codestream {
             lhW,
             lhSx0,
             lhSy0,
-            qcd,
+            compQcd,
             bandIdxLh,
             isReversible,
             bitDepth
@@ -613,13 +796,25 @@ class Codestream {
             hhW,
             hhSx0,
             hhSy0,
-            qcd,
+            compQcd,
             bandIdxHh,
             isReversible,
             bitDepth
           );
 
-          resolutionsForIDWT.push({ width: resW, height: resH, hl: hlBuf, lh: lhBuf, hh: hhBuf });
+          resolutionsForIDWT.push({
+            width: resW,
+            height: resH,
+            hl: hlBuf,
+            lh: lhBuf,
+            hh: hhBuf,
+            x0: res.getResolutionRectangle().getPoint().getX(),
+            y0: res.getResolutionRectangle().getPoint().getY(),
+            hlW: hlW,
+            hlH: hlH,
+            lhW: lhW,
+            lhH: lhH
+          });
         }
 
         // Run IDWT

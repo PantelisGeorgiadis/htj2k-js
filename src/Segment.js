@@ -765,6 +765,103 @@ class QcdSegment extends Segment {
 }
 //#endregion
 
+//#region QccSegment
+class QccSegment extends Segment {
+  /**
+   * Creates an instance of QccSegment.
+   * @constructor
+   * @param {number} position - Segment position in codestream.
+   * @param {ArrayBuffer} buffer - Segment buffer.
+   */
+  constructor(position, buffer) {
+    super(Marker.Qcc, position, buffer);
+
+    this.component = 0;
+    this.decompositionLevels = 0;
+    this.quantizationStyle = 0;
+    this.quantizationStepSize = [];
+  }
+
+  /**
+   * Gets the component index this segment applies to.
+   * @method
+   * @returns {number} The component index.
+   */
+  getComponent() {
+    return this.component;
+  }
+
+  /**
+   * Gets decomposition levels.
+   * @method
+   * @returns {number} The decomposition levels.
+   */
+  getDecompositionLevels() {
+    return this.decompositionLevels;
+  }
+
+  /**
+   * Gets quantization style.
+   * @method
+   * @returns {number} The quantization style.
+   */
+  getQuantizationStyle() {
+    return this.quantizationStyle;
+  }
+
+  /**
+   * Gets quantization step size.
+   * @method
+   * @returns {Array<number>} The quantization step size.
+   */
+  getQuantizationStepSize() {
+    return this.quantizationStepSize;
+  }
+
+  /**
+   * Parses the segment.
+   * @method
+   */
+  parse() {
+    const binaryReader = new BinaryReader(this.getBuffer(), false);
+
+    this.component = binaryReader.readUint8();
+    this.quantizationStyle = binaryReader.readUint8();
+    if ((this.quantizationStyle & 0x1f) === 0) {
+      this.decompositionLevels = (this.getLength() - 6) / 3;
+      if (this.getLength() !== 6 + 3 * this.decompositionLevels) {
+        throw new Error('Invalid length value in QCC segment');
+      }
+      for (let i = 0; i < 1 + 3 * this.decompositionLevels; ++i) {
+        this.quantizationStepSize.push(binaryReader.readUint8());
+      }
+    } else if ((this.quantizationStyle & 0x1f) === 1) {
+      this.decompositionLevels = 0;
+      throw new Error('Scalar derived quantization is not supported yet in QCC segment');
+    } else if ((this.quantizationStyle & 0x1f) === 2) {
+      this.decompositionLevels = (this.getLength() - 7) / 6;
+      if (this.getLength() != 7 + 6 * this.decompositionLevels) {
+        throw new Error('Invalid length value in QCC marker');
+      }
+      for (let i = 0; i < 1 + 3 * this.decompositionLevels; ++i) {
+        this.quantizationStepSize.push(binaryReader.readUint16());
+      }
+    } else {
+      throw new Error('Invalid quantization style value in QCC segment');
+    }
+  }
+
+  /**
+   * Gets the segment description.
+   * @method
+   * @returns {string} Segment description.
+   */
+  toString() {
+    return `${super.toString()} [Component: ${this.getComponent()}, Decomposition levels: ${this.getDecompositionLevels()}, Quantization style: 0x${this.getQuantizationStyle().toString(16)}]`;
+  }
+}
+//#endregion
+
 //#region SotSegment
 class SotSegment extends Segment {
   /**
@@ -1225,6 +1322,7 @@ module.exports = {
   ComSegment,
   NltSegment,
   PpmSegment,
+  QccSegment,
   QcdSegment,
   Segment,
   SizSegment,

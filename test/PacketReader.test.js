@@ -159,19 +159,19 @@ describe('PacketReader', () => {
       expect(Array.from(res.cb.data)).to.deep.equal([0x11, 0x22, 0x33, 0x44]);
     });
 
-    // Packet layout for layer 1, same codeblock (already known / included):
+    // Packet layout for layer 1, same codeblock. HTJ2K tag trees are rebuilt
+    // fresh for every packet, so inclusion and missing-MSB bits are read again:
     //
     //   Bit  0: nonEmpty         = 1
-    //   (inclusion: status already set → no bits read)
-    //   (zeroBitplanes: already included → no bits read)
-    //   Bit  1: numPasses bit    = 0  → 1 pass
-    //   Bit  2: lblock extension = 0  → lblock stays 3
-    //   Bits 3–5: len1           = 0,1,1 = 3
-    //   Bits 6–7: padding        = 0,0
+    //   Bit  1: inclusion(0,0,0) = 1  → leaf immediately → included
+    //   Bit  2: mmsbs unary      = 1  → run ends → value=0 → missingMSBs=0
+    //   Bit  3: numPasses bit    = 0  → 1 pass
+    //   Bit  4: lblock extension = 0  → lblock stays 3
+    //   Bits 5–7: len1           = 0,1,1 = 3
     //
-    //   Header byte: 1 0 0 0 1 1 0 0 = 0x8C
+    //   Header byte: 1 1 1 0 0 0 1 1 = 0xE3
     //   Body: 3 bytes [0xAA, 0xBB, 0xCC]
-    it('concatenates cb.data and accumulates passes on second inclusion', () => {
+    it('replaces cb.data and passes on second inclusion (HTJ2K self-contained segments)', () => {
       const pr = new PacketReader();
       const res = makeResolutionWithCb();
 
@@ -180,7 +180,7 @@ describe('PacketReader', () => {
 
       // Layer 1
       const result = pr.readPacket(
-        new Uint8Array([0x8c, 0xaa, 0xbb, 0xcc]),
+        new Uint8Array([0xe3, 0xaa, 0xbb, 0xcc]),
         0,
         4,
         1,
@@ -190,9 +190,10 @@ describe('PacketReader', () => {
       );
 
       expect(result).to.equal(4);
-      expect(res.cb.passes).to.equal(2);
+      expect(res.cb.passes).to.equal(1);
+      expect(res.cb.lengths1).to.equal(3);
       expect(res.cb.lengths2).to.equal(0);
-      expect(Array.from(res.cb.data)).to.deep.equal([0x11, 0x22, 0x33, 0x44, 0xaa, 0xbb, 0xcc]);
+      expect(Array.from(res.cb.data)).to.deep.equal([0xaa, 0xbb, 0xcc]);
     });
   });
 
