@@ -1,16 +1,6 @@
 const { TagTree } = require('./Tree');
 
 //#region PacketReader
-/**
- * HTJ2K packet reader implementing the full multi-layer packet semantics of
- * ITU-T T.800 B.10 as realized by OpenJPEG's opj_t2_read_packet_header /
- * opj_t2_read_packet_data (t2.c): persistent inclusion / missing-MSB
- * tag-trees, per-codeblock segment accumulation across quality layers and
- * tile-parts, and chunked codeblock data gathering.
- *
- * All packet state is persistent within a tile; {@link resetState} must be
- * called before decoding a new tile.
- */
 class PacketReader {
   /**
    * Creates an instance of PacketReader.
@@ -130,7 +120,7 @@ class PacketReader {
     // Per Rec. ITU-T T.800 Figure B.10 the EPH marker sits at the end of the
     // packet HEADER. When headers are packed via PPM/PPT, the EPH markers are
     // stored as literal 0xff92 bytes inside the packed-header data (this is
-    // what Kakadu writes and what OpenJPEG consumes from ppm_data). SOP
+    // what OpenJPEG writes and consumes from ppm_data). SOP
     // markers, in contrast, stay inline in the tile-part body.
     const useEph = codInfo.useEph;
     const codeblockStyle = codInfo.codeblockStyle;

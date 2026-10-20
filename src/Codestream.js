@@ -1095,7 +1095,7 @@ class Codestream {
         passes = 1;
       }
       // OpenJPEG's ht_dec hard-fails when the accumulated pass count exceeds
-      // three, but Kakadu multi-layer HT streams legitimately carry many
+      // three, but multi-layer HT streams legitimately carry many
       // refinement passes per segment: the HT entropy streams are
       // bitplane-driven, so the pass type saturates at CUP+SPP+MRP while the
       // full lengths1/lengths2 byte ranges still carry every accumulated pass.
@@ -1107,11 +1107,11 @@ class Codestream {
         continue;
       }
 
-      // BlockDecoder follows the Kakadu/OpenJPH convention where missingMSBs
+      // BlockDecoder follows the OpenJPH convention where missingMSBs
       // counts the all-zero planes strictly ABOVE the first significant
-      // bitplane, i.e. openjpeg_zero_bplanes - 1 (Kakadu block_dec passes
-      // missing_msbs = mb - numbps - 1 with its own numbps offset). The
-      // OpenJPEG-style guards above still use the standard count.
+      // bitplane, i.e. openjpeg_zero_bplanes - 1 (block decoders typically
+      // pass missing_msbs = mb - numbps - 1 with their own numbps offset).
+      // The OpenJPEG-style guards above still use the standard count.
       const missingMSBs = zeroBplanes > 0 ? zeroBplanes - 1 : 0;
       const p = 30 - missingMSBs;
       if (p < 0) {
