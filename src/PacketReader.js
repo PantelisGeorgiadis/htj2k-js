@@ -1,94 +1,161 @@
-//#region PacketTagTrees
+//#region TgtTree
 /**
- * Fresh-per-packet quad/tag trees for HTJ2K packet headers, mirroring the
- * `tag_tree` structures that OpenJPH re-initialises for every packet parse
- * (ojph_precinct.cpp precinct::parse). Two trees are kept: an inclusion tree
- * (values 0/1) and a missing-MSBs tree (unary counts). Each level of a tree
- * spans ceil(w / 2^level) x ceil(h / 2^level) nodes; level `numLevels` holds
- * the single root node.
+ * Tag-tree coder exactly as specified in ITU-T T.800 Annex H and implemented
+ * by OpenJPEG (src/lib/openjp2/tgt.c). Nodes are stored leaves-first, level
+ * by level, with each level's dimensions ceil-halved from the one below
+ * (floor((n + 1) / 2)); the final level holds the single root node.
+ *
+ * Unlike the simplified fresh-per-packet trees used for single-layer HTJ2K
+ * streams, these trees PERSIST across packets of a tile and are only reset
+ * when a packet of quality layer 0 is parsed for a given
+ * (component, resolution, precinct) position (T.800 B.10.2, OpenJPEG
+ * opj_t2_read_packet_header). This is what enables multi-layer decoding:
+ * the inclusion tree encodes "included at layer L" and the missing-MSBs
+ * tree encodes the zero-bitplane count exactly once per codeblock.
  */
-class PacketTagTrees {
+class TgtTree {
   /**
-   * Creates an instance of PacketTagTrees.
+   * Creates an instance of TgtTree.
    * @constructor
-   * @param {number} w - Codeblock grid width of the precinct portion.
-   * @param {number} h - Codeblock grid height of the precinct portion.
+   * @param {number} numleafsh - Number of node columns (tree width).
+   * @param {number} numleafsv - Number of node rows (tree height).
    */
-  constructor(w, h) {
-    this.w = w;
-    this.h = h;
-    this.numLevels = 1 + Math.max(PacketTagTrees._log2ceil(w), PacketTagTrees._log2ceil(h));
-    // Precompute per-level origins for values and flags (leaf level first).
-    this.valueOrigins = [];
-    this.flagOrigins = [];
-    const levelDims = [];
-    let total = 0;
-    for (let lev = 0; lev <= this.numLevels; lev++) {
-      levelDims.push([Math.ceil(w / Math.pow(2, lev)), Math.ceil(h / Math.pow(2, lev))]);
+  constructor(numleafsh, numleafsv) {
+    this.numleafsh = numleafsh;
+    this.numleafsv = numleafsv;
+
+    // Per-level dimensions, leaf level first, ceil-halving until 1x1.
+    const dimsW = [];
+    const dimsH = [];
+    let w = numleafsh;
+    let h = numleafsv;
+    let numNodes = 0;
+    for (;;) {
+      dimsW.push(w);
+      dimsH.push(h);
+      numNodes += w * h;
+      const done = w === 1 && h === 1;
+      w = (w + 1) >> 1;
+      h = (h + 1) >> 1;
+      if (done) {
+        break;
+      }
     }
-    // OpenJPH's num_levels includes the root implicitly: level dims shrink
-    // until 1x1 at numLevels.
-    for (let lev = 0; lev <= this.numLevels; lev++) {
-      this.valueOrigins.push(total);
-      this.flagOrigins.push(total);
-      total += levelDims[lev][0] * levelDims[lev][1];
+    this.dimsW = dimsW;
+    this.dimsH = dimsH;
+    this.numNodes = numNodes;
+    this.value = new Int32Array(numNodes);
+    this.low = new Int32Array(numNodes);
+
+    // Parent index for every node except the root (root parent = -1).
+    // The walk mirrors OpenJPEG's opj_tgt_create node linkage exactly:
+    // horizontal pairs of children share a parent; on even rows the parent
+    // cursor restarts at the row's first parent while the "next row" anchor
+    // advances by the row's node count.
+    this.parent = new Int32Array(numNodes).fill(-1);
+    let node = 0;
+    let parentNode = numleafsh * numleafsv;
+    let parentNode0 = parentNode;
+    const numLevels = dimsW.length;
+    for (let i = 0; i < numLevels - 1; ++i) {
+      for (let j = 0; j < dimsH[i]; ++j) {
+        let k = dimsW[i];
+        while (--k >= 0) {
+          this.parent[node++] = parentNode;
+          if (--k >= 0) {
+            this.parent[node++] = parentNode;
+          }
+          ++parentNode;
+        }
+        if ((j & 1) || j === dimsH[i] - 1) {
+          parentNode0 = parentNode;
+        } else {
+          parentNode = parentNode0;
+          parentNode0 += dimsW[i];
+        }
+      }
     }
-    this.levelDims = levelDims;
-    this.incValues = new Uint8Array(total);
-    this.incFlags = new Uint8Array(total);
-    this.mmsbValues = new Uint8Array(total);
-    this.mmsbFlags = new Uint8Array(total);
+    this.reset();
   }
 
-  static _log2ceil(v) {
-    if (v <= 1) {
-      return 0;
+  /**
+   * Resets all node values (opj_tgt_reset).
+   * @method
+   */
+  reset() {
+    this.value.fill(999);
+    this.low.fill(0);
+  }
+
+  /**
+   * Decodes the value at a leaf (opj_tgt_decode). Bit reads go through the
+   * supplied callback.
+   * @method
+   * @param {Function} readBit - Callback returning one bit (0 or 1) per call.
+   * @param {number} leafno - Leaf index (row-major within the precinct grid).
+   * @param {number} threshold - Decode threshold.
+   * @returns {boolean} True when the leaf value is below the threshold.
+   */
+  decode(readBit, leafno, threshold) {
+    // Collect the path from the leaf up to (but excluding) the root.
+    const stk = [];
+    let n = leafno;
+    while (this.parent[n] !== -1) {
+      stk.push(n);
+      n = this.parent[n];
     }
+
+    let low = 0;
+    for (;;) {
+      if (low > this.low[n]) {
+        this.low[n] = low;
+      } else {
+        low = this.low[n];
+      }
+      while (low < threshold && low < this.value[n]) {
+        if (readBit()) {
+          this.value[n] = low;
+        } else {
+          ++low;
+        }
+      }
+      this.low[n] = low;
+      if (stk.length === 0) {
+        break;
+      }
+      n = stk.pop();
+    }
+
+    return this.value[leafno] < threshold;
+  }
+
+  /**
+   * Floor of log2 for a positive integer (opj_uint_floorlog2).
+   * @param {number} v - Positive integer.
+   * @returns {number} floor(log2(v)).
+   */
+  static _floorLog2(v) {
     let n = 0;
-    let p = 1;
-    while (p < v) {
-      p *= 2;
-      n++;
+    while (v > 1) {
+      v >>>= 1;
+      ++n;
     }
     return n;
-  }
-
-  _index(x, y, lev) {
-    const w = this.levelDims[lev][0];
-    return this.valueOrigins[lev] + y * w + x;
-  }
-
-  incValue(x, y, lev) {
-    return this.incValues[this._index(x, y, lev)];
-  }
-
-  incFlagged(x, y, lev) {
-    return this.incFlags[this._index(x, y, lev)] !== 0;
-  }
-
-  setInc(x, y, lev, value, flagged) {
-    const i = this._index(x, y, lev);
-    this.incValues[i] = value;
-    this.incFlags[i] = flagged ? 1 : 0;
-  }
-
-  mmsbValue(x, y, lev) {
-    return this.mmsbValues[this._index(x, y, lev)];
-  }
-
-  mmsbFlagged(x, y, lev) {
-    return this.mmsbFlags[this._index(x, y, lev)] !== 0;
-  }
-
-  setMmsb(x, y, lev, value, flagged) {
-    const i = this._index(x, y, lev);
-    this.mmsbValues[i] = value;
-    this.mmsbFlags[i] = flagged ? 1 : 0;
   }
 }
 //#endregion
 
 //#region PacketReader
+/**
+ * HTJ2K packet reader implementing the full multi-layer packet semantics of
+ * ITU-T T.800 B.10 as realized by OpenJPEG's opj_t2_read_packet_header /
+ * opj_t2_read_packet_data (t2.c): persistent inclusion / missing-MSB
+ * tag-trees, per-codeblock segment accumulation across quality layers and
+ * tile-parts, and chunked codeblock data gathering.
+ *
+ * All packet state is persistent within a tile; {@link resetState} must be
+ * called before decoding a new tile.
+ */
 class PacketReader {
   /**
    * Creates an instance of PacketReader.
@@ -106,6 +173,19 @@ class PacketReader {
     this._pphBitBuf = 0;
     this._pphBitsLeft = 0;
     this._pphSkipMsb = false;
+
+    // Persistent per-tile packet state, keyed by
+    // `${compIdx}-${resoIdx}-${precinctIdx}-${subBandType}`.
+    this._state = new Map();
+  }
+
+  /**
+   * Clears all per-tile persistent state (tag-trees, segments, chunks).
+   * Must be called before the packet loops of each new tile.
+   * @method
+   */
+  resetState() {
+    this._state.clear();
   }
 
   /**
@@ -157,36 +237,83 @@ class PacketReader {
   }
 
   /**
-   * Read one HTJ2K packet header + body.
-   * Updates codeblock data (cb.data, cb.missingMSBs, cb.passes, etc.)
-   * in the SubBand structures for this resolution / precinct.
+   * Read one HTJ2K packet header + body (OpenJPEG model). Stores per-codeblock
+   * segment/chunk state on `cb._pkt` for later assembly.
    * @method
    * @param {Uint8Array} buffer - Full codestream byte array.
    * @param {number} pos - Current byte position in buffer.
    * @param {number} dataEnd - Exclusive end of tile-part data in buffer.
    * @param {number} layer - Quality layer index (0-based).
+   * @param {number} compIdx - Component index.
+   * @param {number} resoIdx - Resolution index.
    * @param {Object} resolution - Resolution object from tile component.
    * @param {number} precinctIdx - Flat precinct index (py * nPrecinctsWide + px).
-   * @param {CodSegment} cod - Coding style segment.
+   * @param {Array<number>} bandNumbps - Mb (nominal bitplanes) per quantization
+   *   band index (LL=0, HL=3(r-1)+1, LH=+2, HH=+3).
+   * @param {Object} codInfo - {boolean useSop, boolean useEph, number codeblockStyle}.
    * @returns {number} New byte position after this packet.
    */
-  readPacket(buffer, pos, dataEnd, layer, resolution, precinctIdx, cod) {
+  readPacket(
+    buffer,
+    pos,
+    dataEnd,
+    layer,
+    compIdx,
+    resoIdx,
+    resolution,
+    precinctIdx,
+    bandNumbps,
+    codInfo
+  ) {
     if (pos >= dataEnd) {
       return pos;
     }
 
     const initialPos = pos;
     const initialPphPos = this._pphActive ? this._pphPos : 0;
-    const useSop = cod.useSopMarker();
+    const useSop = codInfo.useSop;
     // Per Rec. ITU-T T.800 Figure B.10 the EPH marker sits at the end of the
     // packet HEADER. When headers are packed via PPM/PPT, the EPH markers are
     // stored as literal 0xff92 bytes inside the packed-header data (this is
     // what Kakadu writes and what OpenJPEG consumes from ppm_data). SOP
     // markers, in contrast, stay inline in the tile-part body.
-    const useEph = cod.useEphMarker();
+    const useEph = codInfo.useEph;
+    const codeblockStyle = codInfo.codeblockStyle;
     const subBands = resolution.subBands;
     const pp = resolution.getPrecinctParameters();
     const numPrecinctsWide = pp.numPrecinctsWide;
+
+    const pxVal = precinctIdx % numPrecinctsWide;
+    const pyVal = Math.floor(precinctIdx / numPrecinctsWide);
+
+    // Bands of this resolution that have codeblocks in this precinct.
+    const active = [];
+    for (let si = 0; si < subBands.length; si++) {
+      const sb = subBands[si];
+      if (sb.codeblocks.length === 0) {
+        continue;
+      }
+      const pr = sb.precincts.find((p) => p.px === pxVal && p.py === pyVal);
+      if (pr && pr.cbsW > 0 && pr.cbsH > 0) {
+        active.push({ si, sb, precinct: pr });
+      }
+    }
+
+    // Reset tag-trees and codeblock segment state on every layer-0 packet
+    // (OpenJPEG t2.c, before the present-bit is read).
+    if (layer === 0) {
+      for (const { sb, precinct } of active) {
+        const bandState = this._getBandState(compIdx, resoIdx, precinctIdx, sb, precinct);
+        bandState.inclTree.reset();
+        bandState.imsbTree.reset();
+        for (const st of bandState.cbs) {
+          st.numsegs = 0;
+          st.chunks.length = 0;
+          st.numchunks = 0;
+          st.corrupted = false;
+        }
+      }
+    }
 
     // Skip SOP (0xFF91 + 2-byte length + 2-byte sequence = 6 bytes) if present
     if (useSop && pos + 5 < dataEnd && buffer[pos] === 0xff && buffer[pos + 1] === 0x91) {
@@ -212,117 +339,114 @@ class PacketReader {
       this._skipMsb = false;
     }
 
-    // Find precinct by (px, py) coordinates in the subband's precincts array.
-    const pxVal = precinctIdx % numPrecinctsWide;
-    const pyVal = Math.floor(precinctIdx / numPrecinctsWide);
+    const readBit = () => this._readBit();
 
-    // Determine if any subband has codeblocks for this precinct
-    let hasNonEmpty = false;
-    for (let si = 0; si < subBands.length; si++) {
-      const sb = subBands[si];
-      if (sb.codeblocks.length === 0) {
-        continue;
-      }
-      const pr = sb.precincts.find((p) => p.px === pxVal && p.py === pyVal);
-      if (pr && pr.cbsW > 0 && pr.cbsH > 0) {
-        hasNonEmpty = true;
-        break;
-      }
-    }
+    // Header phase --------------------------------------------------------
+    const present = this._readBit();
+    const stateList = [];
 
-    // Codeblocks scheduled for body reading (filled during header parse)
-    const cbsToRead = [];
+    if (present && active.length > 0) {
+      for (const { si, sb, precinct } of active) {
+        const bandState = this._getBandState(compIdx, resoIdx, precinctIdx, sb, precinct);
+        // Quantization band index: resolution 0 is LL (index 0); for r>0 the
+        // subBands order is HL, LH, HH mapping to indices 3(r-1)+1/2/3.
+        const bandIdx = resoIdx === 0 ? 0 : 3 * (resoIdx - 1) + 1 + si;
+        const bandMb = bandIdx < bandNumbps.length ? bandNumbps[bandIdx] : 0;
 
-    if (!hasNonEmpty) {
-      // Resolution has no codeblocks: read the sole 0-bit "empty packet" indicator
-      this._readBit();
-    } else {
-      // Read the empty-packet indicator (first bit of the header)
-      const nonEmpty = this._readBit();
-      if (nonEmpty) {
-        for (let si = 0; si < subBands.length; si++) {
-          const sb = subBands[si];
-          if (sb.codeblocks.length === 0) {
+        for (let cblkno = 0; cblkno < precinct.cbsW * precinct.cbsH; cblkno++) {
+          const localY = Math.floor(cblkno / precinct.cbsW);
+          const localX = cblkno % precinct.cbsW;
+          const cbIdx = (precinct.cbOffY + localY) * sb.totalCbsWide + precinct.cbOffX + localX;
+          if (cbIdx < 0 || cbIdx >= sb.codeblocks.length) {
             continue;
           }
-          const precinct = sb.precincts.find((p) => p.px === pxVal && p.py === pyVal);
-          if (!precinct || precinct.cbsW === 0 || precinct.cbsH === 0) {
+          const cb = sb.codeblocks[cbIdx];
+          const st = bandState.cbs[cblkno];
+          st.cb = cb;
+          cb._pkt = st;
+          stateList.push(st);
+
+          // 1. Inclusion: tag-tree on first appearance, single bit afterwards.
+          let included;
+          if (st.numsegs === 0) {
+            included = bandState.inclTree.decode(readBit, cblkno, layer + 1);
+          } else {
+            included = this._readBit() === 1;
+          }
+          if (!included) {
+            st.numnewpasses = 0;
             continue;
           }
 
-          // HTJ2K tag trees are rebuilt FRESH for every packet: inclusion and
-          // missing-MSB values never persist across packets (each HT codeblock
-          // segment is self-contained). See OpenJPH precinct::parse, which
-          // re-initialises the trees inside the per-band loop of every packet.
-          const trees = new PacketTagTrees(precinct.cbsW, precinct.cbsH);
-
-          for (let cbLocalY = 0; cbLocalY < precinct.cbsH; cbLocalY++) {
-            for (let cbLocalX = 0; cbLocalX < precinct.cbsW; cbLocalX++) {
-              const cbGlobalX = precinct.cbOffX + cbLocalX;
-              const cbGlobalY = precinct.cbOffY + cbLocalY;
-              const cbIdx = cbGlobalY * sb.totalCbsWide + cbGlobalX;
-              if (cbIdx < 0 || cbIdx >= sb.codeblocks.length) {
-                continue;
-              }
-              const cb = sb.codeblocks[cbIdx];
-
-              // Inclusion (fresh per-packet tree)
-              const included = this._readInclusionHT(cbLocalX, cbLocalY, trees);
-              if (!included) {
-                continue;
-              }
-
-              // Zero bitplanes / missing MSBs — read fresh for every packet
-              const missingMSBs = this._readMissingMSBsHT(cbLocalX, cbLocalY, trees);
-
-              // Number of passes (encodes placeholder pass groups for HTJ2K).
-              // In HTJ2K each packet's codeblock segment is a self-contained
-              // HT block: placeholder passes shift the effective MSB count for
-              // THIS packet only — they are not accumulated across packets.
-              const numPasses = this._readNumPasses();
-              const numPhld = Math.floor((numPasses - 1) / 3);
-              cb.missingMSBs = missingMSBs + numPhld;
-              const actualPasses = numPasses - numPhld * 3;
-
-              // Lblock: starts at 3 for each packet header occurrence
-              let lblock = 3;
-              while (this._readBit() === 1) {
-                lblock++;
-              }
-              cb.lblock = lblock;
-
-              // Length 1 (cleanup pass segment)
-              const numPhldPasses = numPhld * 3;
-              const lenBits1 = cb.lblock + Math.floor(Math.log2(Math.max(numPhldPasses + 1, 1)));
-              const len1 = this._readBits(lenBits1);
-
-              // Length 2 (SigProp + MagRef segments if > 1 actual pass)
-              let len2 = 0;
-              if (actualPasses > 1) {
-                const lenBits2 = cb.lblock + (actualPasses > 2 ? 1 : 0);
-                len2 = this._readBits(lenBits2);
-              }
-
-              cbsToRead.push({ cb, len1, len2, actualPasses });
+          // 2. Zero bitplanes (missing MSBs) via the imsb tag-tree, first time only.
+          if (st.numsegs === 0) {
+            let i = 0;
+            while (!bandState.imsbTree.decode(readBit, cblkno, i)) {
+              ++i;
             }
+            st.Mb = bandMb;
+            // Mb + 1 - i under unsigned wrap semantics, matching OpenJPEG's
+            // behaviour on the malformed i > Mb + 1 path.
+            st.numbps = (bandMb + 1 - i) >>> 0;
+            st.numlenbits = 3;
+          }
+
+          // 3. Number of new coding passes + length-indicator increment.
+          st.numnewpasses = this._readNumPasses();
+          st.numlenbits += this._readCommaCode();
+
+          // 4. Target segment.
+          let segno;
+          if (st.numsegs === 0) {
+            segno = 0;
+            this._initSeg(st, 0, codeblockStyle, true);
+          } else {
+            segno = st.numsegs - 1;
+            if (st.segs[segno].numpasses === st.segs[segno].maxpasses) {
+              ++segno;
+              this._initSeg(st, segno, codeblockStyle, false);
+            }
+          }
+
+          // 5. Per-segment new-lengths (HT branch of opj_t2_read_packet_header).
+          let n = st.numnewpasses;
+          for (;;) {
+            const seg = st.segs[segno];
+            seg.numnewpasses = segno === 0 ? 1 : n;
+            const bits = st.numlenbits + TgtTree._floorLog2(seg.numnewpasses);
+            if (bits > 32) {
+              throw new Error(
+                `Invalid bit number ${bits} in packet header ` +
+                  `(layer ${layer}, precinct ${precinctIdx})`
+              );
+            }
+            seg.newlen = this._readBits(bits);
+            n -= seg.numnewpasses;
+            if (n <= 0) {
+              break;
+            }
+            ++segno;
+            this._initSeg(st, segno, codeblockStyle, false);
           }
         }
       }
     }
 
-    // Align bit reader to byte boundary, then advance pos.
-    // For in-line headers, header advancement contributes to pos. For PPM/PPT
-    // headers, only the pph cursor advances; pos remains where it was so the body
-    // bytes are read from the main tile-part buffer.
+    // Byte-align the header bit-reader (opj_bio_inalign): if the last byte
+    // loaded was 0xff, the following bit-stuffed byte belongs to the header
+    // and is consumed as well.
+    if (this._skipMsb) {
+      ++this._bitPos;
+    }
     this._bitsLeft = 0;
     this._skipMsb = false;
+
+    // Advance past the header bytes; consume the (required) EPH marker if in use.
     if (this._pphActive) {
       this._pphPos = this._bitPos;
       this._pphBitBuf = 0;
       this._pphBitsLeft = 0;
       this._pphSkipMsb = false;
-      // Consume the literal EPH marker bytes (0xff 0x92) stored at the end of
-      // every packet's packed header (ITU-T T.800 Figure B.10 with PPM/PPT).
       if (
         useEph &&
         this._pphPos + 1 < this._pphEnd &&
@@ -333,33 +457,64 @@ class PacketReader {
       }
     } else {
       pos = this._bitPos;
-      // Skip inline EPH (0xFF92, 2 bytes) if present after header bits.
       if (useEph && pos + 1 < dataEnd && buffer[pos] === 0xff && buffer[pos + 1] === 0x92) {
         pos += 2;
       }
     }
 
-    // Read coded codeblock body bytes (raw — not bit-stuffed)
-    for (const { cb, len1, len2, actualPasses } of cbsToRead) {
-      const totalBytes = len1 + len2;
-      if (totalBytes === 0) {
+    // Data phase -----------------------------------------------------------
+    // Segments and chunks are read in the same (band, codeblock) order used by
+    // the header phase; codeblocks with no new passes contribute no bytes.
+    let partialBuffer = false;
+    for (const st of stateList) {
+      if (st.numnewpasses === 0) {
         continue;
       }
-      const end = pos + totalBytes;
-      if (end > dataEnd) {
-        break;
-      } // corrupted / truncated
+      if (partialBuffer || st.corrupted) {
+        st.numchunks = 0;
+        st.corrupted = true;
+        continue;
+      }
 
-      const chunk = buffer.slice(pos, end);
-      pos = end;
+      // NOTE: segments were already (re)initialized by the header phase for
+      // this packet; the data phase must NOT re-init them (it would wipe the
+      // newly-parsed numnewpasses/newlen) -- it only advances numsegs.
+      let segno;
+      if (st.numsegs === 0) {
+        segno = 0;
+        st.numsegs = 1;
+      } else {
+        segno = st.numsegs - 1;
+        if (st.segs[segno].numpasses === st.segs[segno].maxpasses) {
+          ++segno;
+          st.numsegs = segno + 1;
+        }
+      }
 
-      // HTJ2K codeblock segments are self-contained per packet: successive
-      // packets (e.g. additional quality layers) REFINISH the codeblock by
-      // replacing the stored segment, not by appending to it.
-      cb.data = chunk;
-      cb.lengths1 = len1;
-      cb.lengths2 = len2;
-      cb.passes = actualPasses;
+      for (;;) {
+        const seg = st.segs[segno];
+        if (pos + seg.newlen > dataEnd) {
+          // Non-strict behavior (OpenJPEG default): mark this codeblock and all
+          // later ones in the packet as corrupted, consuming the remainder.
+          partialBuffer = true;
+          st.corrupted = true;
+          st.numchunks = 0;
+          break;
+        }
+        st.chunks.push(pos, seg.newlen);
+        st.numchunks += 1;
+        pos += seg.newlen;
+        seg.len += seg.newlen;
+        seg.numpasses += seg.numnewpasses;
+        st.numnewpasses -= seg.numnewpasses;
+        seg.realNumPasses = seg.numpasses;
+        if (st.numnewpasses > 0) {
+          ++segno;
+          st.numsegs = segno + 1;
+        } else {
+          break;
+        }
+      }
     }
 
     // No-progress guard: if a packet read produced no advance whatsoever
@@ -378,6 +533,100 @@ class PacketReader {
   }
 
   //#region Private Methods
+  /**
+   * Gets (creating on demand) the persistent band state for one subband of a
+   * (component, resolution, precinct) triple: the two tag-trees and one
+   * per-codeblock record for each codeblock of the precinct portion.
+   * @method
+   * @private
+   * @param {number} compIdx - Component index.
+   * @param {number} resoIdx - Resolution index.
+   * @param {number} precinctIdx - Flat precinct index.
+   * @param {SubBand} sb - Sub-band owning the codeblocks.
+   * @param {Object} precinct - Precinct record {cbsW, cbsH}.
+   * @returns {Object} Band state.
+   */
+  _getBandState(compIdx, resoIdx, precinctIdx, sb, precinct) {
+    const key = compIdx + '-' + resoIdx + '-' + precinctIdx + '-' + sb.subBandType;
+    let band = this._state.get(key);
+    if (!band) {
+      const cbs = [];
+      for (let i = 0; i < precinct.cbsW * precinct.cbsH; i++) {
+        cbs.push({
+          cb: null,
+          Mb: 0,
+          numbps: 0,
+          numlenbits: 3,
+          numnewpasses: 0,
+          numsegs: 0,
+          segs: [],
+          chunks: [],
+          numchunks: 0,
+          corrupted: false,
+          _pending: true
+        });
+      }
+      band = {
+        inclTree: new TgtTree(precinct.cbsW, precinct.cbsH),
+        imsbTree: new TgtTree(precinct.cbsW, precinct.cbsH),
+        cbs
+      };
+      this._state.set(key, band);
+    }
+    return band;
+  }
+
+  /**
+   * Initializes a codeblock segment (opj_t2_init_seg). HT default maxpasses is
+   * 109; TERMALL restricts each segment to a single pass; the LAZY-mode bit
+   * alternates segment capacities as in OpenJPEG (10 for the first segment,
+   * then 2/1 alternating when the previous capacity was 1 or 10).
+   * @method
+   * @private
+   * @param {Object} st - Codeblock packet state.
+   * @param {number} segno - Segment index.
+   * @param {number} codeblockStyle - COD codeblock style flags.
+   * @param {boolean} first - First-segment flag.
+   */
+  _initSeg(st, segno, codeblockStyle, first) {
+    let maxpasses;
+    if ((codeblockStyle & 4) !== 0) {
+      maxpasses = 1;
+    } else if ((codeblockStyle & 8) !== 0) {
+      if (first) {
+        maxpasses = 10;
+      } else {
+        const prev = st.segs[segno - 1].maxpasses;
+        maxpasses = prev === 1 || prev === 10 ? 2 : 1;
+      }
+    } else {
+      maxpasses = 109;
+    }
+    st.segs[segno] = {
+      len: 0,
+      numpasses: 0,
+      numnewpasses: 0,
+      newlen: 0,
+      maxpasses,
+      realNumPasses: 0
+    };
+  }
+
+  /**
+   * Length-indicator increment code (opj_t2_getcommacode): unary code of
+   * n one-bits terminated by a zero-bit (unbounded).
+   * @method
+   * @private
+   * @returns {number} The increment.
+   */
+  _readCommaCode() {
+    let n = 0;
+    while (this._readBit()) {
+      ++n;
+    }
+    return n;
+  }
+
   /**
    * Reads one bit from the packet-header bit stream (HTJ2K bit stuffing).
    * @method
@@ -419,72 +668,6 @@ class PacketReader {
   }
 
   /**
-   * HTJ2K inclusion-tree read (fresh per-packet tree). Descends from the root
-   * toward the leaf for codeblock (cx, cy): a node value of 1 means its subtree
-   * is entirely not-included; the first "0" bit encountered (not yet read for
-   * that node) marks the subtree not-included, while a "1" bit continues the
-   * descent. Bit stuffing is handled by {@link _readBit}.
-   * Mirrors OpenJPH precinct::parse inclusion walk.
-   * @method
-   * @private
-   * @param {number} cx - Codeblock local x index.
-   * @param {number} cy - Codeblock local y index.
-   * @param {PacketTagTrees} trees - Fresh per-packet tag trees for the precinct.
-   * @returns {boolean} True if codeblock is included in this packet.
-   */
-  _readInclusionHT(cx, cy, trees) {
-    for (let cl = trees.numLevels; cl > 0; cl--) {
-      const lev = cl - 1;
-      const nx = cx >> lev;
-      const ny = cy >> lev;
-      if (trees.incValue(nx, ny, lev) === 1) {
-        return false;
-      }
-      if (!trees.incFlagged(nx, ny, lev)) {
-        const bit = this._readBit();
-        trees.setInc(nx, ny, lev, 1 - bit, true);
-        if (bit === 0) {
-          return false;
-        }
-      }
-    }
-    return true;
-  }
-
-  /**
-   * HTJ2K missing-MSBs (zero bitplane) tree read (fresh per-packet tree).
-   * At each level the counter is seeded from the parent node's value; if the
-   * current node has not been read yet, unary bits ("1" ends the run) extend
-   * the counter and the result is stored in the node. Mirrors OpenJPH
-   * precinct::parse missing-msbs walk.
-   * @method
-   * @private
-   * @param {number} cx - Codeblock local x index.
-   * @param {number} cy - Codeblock local y index.
-   * @param {PacketTagTrees} trees - Fresh per-packet tag trees for the precinct.
-   * @returns {number} Missing MSBs count.
-   */
-  _readMissingMSBsHT(cx, cy, trees) {
-    let mmsbs = 0;
-    for (let levp1 = trees.numLevels; levp1 > 0; levp1--) {
-      const lev = levp1 - 1;
-      const nx = cx >> lev;
-      const ny = cy >> lev;
-      // Parent node (level levp1) seeds the count for the current node.
-      mmsbs = trees.mmsbValue(cx >> levp1, cy >> levp1, levp1);
-      if (!trees.mmsbFlagged(nx, ny, lev)) {
-        let bit = 0;
-        while (bit === 0) {
-          bit = this._readBit();
-          mmsbs += 1 - bit;
-        }
-        trees.setMmsb(nx, ny, lev, mmsbs, true);
-      }
-    }
-    return mmsbs;
-  }
-
-  /**
    * Reads the coding-passes count (ISO 15444-1 B.10.6).
    * @method
    * @private
@@ -514,3 +697,4 @@ class PacketReader {
 //#region Exports
 module.exports = PacketReader;
 //#endregion
+

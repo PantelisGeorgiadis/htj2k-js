@@ -83,9 +83,10 @@ class BlockDecoder {
    * @param {number} lengths2 - Length of refinement passes (SPP+MRP).
    * @param {number} width - Codeblock width.
    * @param {number} height - Codeblock height.
+   * @param {boolean} stripeCausal - Vertically stripe-causal context (codeblock style bit 0x08).
    * @returns {Int32Array|null} Decoded coefficients (height×width), or null on failure.
    */
-  decodeCodeblock(codedData, offset, missingMSBs, numPasses, lengths1, lengths2, width, height) {
+  decodeCodeblock(codedData, offset, missingMSBs, numPasses, lengths1, lengths2, width, height, stripeCausal = false) {
     if (lengths1 < 2) {
       return null;
     }
@@ -751,7 +752,6 @@ class BlockDecoder {
       }
 
       // Significance Propagation Pass
-      const stripeCausal = false; // TODO: plumb from cod_mode bit (HT block decoder default = false)
       const prevRowSig = this._prevRowSig;
       if (prevRowSig.length < mstr + 2) {
         this._prevRowSig = new Uint16Array(mstr + 8);

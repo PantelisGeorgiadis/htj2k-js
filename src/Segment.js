@@ -729,22 +729,26 @@ class QcdSegment extends Segment {
 
     this.quantizationStyle = binaryReader.readUint8();
     if ((this.quantizationStyle & 0x1f) === 0) {
-      this.decompositionLevels = (this.getLength() - 4) / 3;
-      if (this.getLength() !== 4 + 3 * this.decompositionLevels) {
+      // Body (length - 2 bytes) is Sq followed by 1 + 3 * D single-byte steps
+      const steps = this.getLength() - 3;
+      if (steps < 1 || steps % 3 !== 1) {
         throw new Error('Invalid length value in QCD segment');
       }
-      for (let i = 0; i < 1 + 3 * this.decompositionLevels; ++i) {
+      this.decompositionLevels = (steps - 1) / 3;
+      for (let i = 0; i < steps; ++i) {
         this.quantizationStepSize.push(binaryReader.readUint8());
       }
     } else if ((this.quantizationStyle & 0x1f) === 1) {
       this.decompositionLevels = 0;
       throw new Error('Scalar derived quantization is not supported yet in QCD segment');
     } else if ((this.quantizationStyle & 0x1f) === 2) {
-      this.decompositionLevels = (this.getLength() - 5) / 6;
-      if (this.getLength() != 5 + 6 * this.decompositionLevels) {
+      // Body is Sq followed by 1 + 3 * D two-byte steps
+      const steps = (this.getLength() - 3) / 2;
+      if ((this.getLength() - 3) % 2 !== 0 || steps < 1 || steps % 3 !== 1) {
         throw new Error('Invalid length value in QCD marker');
       }
-      for (let i = 0; i < 1 + 3 * this.decompositionLevels; ++i) {
+      this.decompositionLevels = (steps - 1) / 3;
+      for (let i = 0; i < steps; ++i) {
         this.quantizationStepSize.push(binaryReader.readUint16());
       }
     } else {
@@ -828,22 +832,26 @@ class QccSegment extends Segment {
     this.component = binaryReader.readUint8();
     this.quantizationStyle = binaryReader.readUint8();
     if ((this.quantizationStyle & 0x1f) === 0) {
-      this.decompositionLevels = (this.getLength() - 6) / 3;
-      if (this.getLength() !== 6 + 3 * this.decompositionLevels) {
+      // Body (length - 2) is Rscc, Sq, then 1 + 3 * D single-byte steps
+      const steps = this.getLength() - 4;
+      if (steps < 1 || steps % 3 !== 1) {
         throw new Error('Invalid length value in QCC segment');
       }
-      for (let i = 0; i < 1 + 3 * this.decompositionLevels; ++i) {
+      this.decompositionLevels = (steps - 1) / 3;
+      for (let i = 0; i < steps; ++i) {
         this.quantizationStepSize.push(binaryReader.readUint8());
       }
     } else if ((this.quantizationStyle & 0x1f) === 1) {
       this.decompositionLevels = 0;
       throw new Error('Scalar derived quantization is not supported yet in QCC segment');
     } else if ((this.quantizationStyle & 0x1f) === 2) {
-      this.decompositionLevels = (this.getLength() - 7) / 6;
-      if (this.getLength() != 7 + 6 * this.decompositionLevels) {
-        throw new Error('Invalid length value in QCC marker');
+      // Body (length - 2) is Rscc, Sq, then 1 + 3 * D two-byte steps
+      const steps = (this.getLength() - 4) / 2;
+      if ((this.getLength() - 4) % 2 !== 0 || steps < 1 || steps % 3 !== 1) {
+        throw new Error('Invalid length value in QCC segment');
       }
-      for (let i = 0; i < 1 + 3 * this.decompositionLevels; ++i) {
+      this.decompositionLevels = (steps - 1) / 3;
+      for (let i = 0; i < steps; ++i) {
         this.quantizationStepSize.push(binaryReader.readUint16());
       }
     } else {

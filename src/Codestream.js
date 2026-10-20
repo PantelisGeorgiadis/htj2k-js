@@ -394,6 +394,8 @@ class Codestream {
     const isColorTransform = cod.isEmployingColorTransform();
 
     const buffer = new Uint8Array(this.binaryReader.buffer);
+    // Referenced by _assembleBand when concatenating codeblock data chunks.
+    this._codestreamBytes = buffer;
 
     if (!this.tiles || this.tiles.length === 0) {
       throw new Error('No tiles found in codestream');
@@ -432,10 +434,30 @@ class Codestream {
       mainQcds.push(compQcd);
     }
 
+    const codInfo = {
+      useSop: cod.useSopMarker(),
+      useEph: cod.useEphMarker(),
+      codeblockStyle: cod.getCodeblockStyle()
+    };
+
     for (const tile of this.tiles) {
       // Effective quantization per component: main-header QCC overrides the
       // main QCD; tile-part QCD/QCC segments override both for this tile.
       const effectiveQcds = mainQcds.slice();
+
+      // Persistent packet-header state (tag-trees, segments) is per tile.
+      this.packetReader.resetState();
+
+      // Mb (nominal dynamic range minus guard bands) per quantization band,
+      // per OpenJPEG: numbps = expn + numgbits - 1 (tcd.c).
+      const bandNumbpsPerComp = [];
+      const buildBandNumbps = (qcdSeg) => {
+        const guardBits = qcdSeg.quantizationStyle >> 5;
+        const noQuant = (qcdSeg.quantizationStyle & 0x1f) === 0;
+        return qcdSeg.quantizationStepSize.map(
+          (s) => (noQuant ? s >> 3 : s >> 11) + guardBits - 1
+        );
+      };
 
       // Position-anchored progressions (RPCL/PCRL/CPRL) require per
       // (component, resolution) cursors that walk each resolution's own
@@ -499,6 +521,12 @@ class Codestream {
         let pos = dataStart;
         const progressionOrder = cod.getProgressionOrder();
 
+        // Refresh Mb tables for this tile-part's effective quantization.
+        bandNumbpsPerComp.length = 0;
+        for (let c = 0; c < numComponents; c++) {
+          bandNumbpsPerComp.push(buildBandNumbps(effectiveQcds[c]));
+        }
+
         // If PPM is in use, peel off the next [Nppm, Ippm] group for this tile-part
         // and install it as the packet-header source.
         if (ppmActive) {
@@ -534,7 +562,18 @@ class Codestream {
                   if (this.packetReader.isExhausted(pos, dataEnd)) {
                     break;
                   }
-                  pos = this.packetReader.readPacket(buffer, pos, dataEnd, l, resolution, p, cod);
+                  pos = this.packetReader.readPacket(
+                    buffer,
+                    pos,
+                    dataEnd,
+                    l,
+                    c,
+                    r,
+                    resolution,
+                    p,
+                    bandNumbpsPerComp[c],
+                    codInfo
+                  );
                 }
               }
             }
@@ -550,7 +589,18 @@ class Codestream {
                   if (this.packetReader.isExhausted(pos, dataEnd)) {
                     break;
                   }
-                  pos = this.packetReader.readPacket(buffer, pos, dataEnd, l, resolution, p, cod);
+                  pos = this.packetReader.readPacket(
+                    buffer,
+                    pos,
+                    dataEnd,
+                    l,
+                    c,
+                    r,
+                    resolution,
+                    p,
+                    bandNumbpsPerComp[c],
+                    codInfo
+                  );
                 }
               }
             }
@@ -591,9 +641,12 @@ class Codestream {
                   pos,
                   dataEnd,
                   l,
+                  bestC,
+                  r,
                   resolution,
                   best.idx,
-                  cod
+                  bandNumbpsPerComp[bestC],
+                  codInfo
                 );
               }
               if (++cur.x >= pp.numPrecinctsWide) {
@@ -646,9 +699,12 @@ class Codestream {
                 pos,
                 dataEnd,
                 l,
+                bestC,
+                bestR,
                 resolution,
                 best.idx,
-                cod
+                bandNumbpsPerComp[bestC],
+                codInfo
               );
             }
             if (++cur.x >= pp.numPrecinctsWide) {
@@ -691,9 +747,12 @@ class Codestream {
                   pos,
                   dataEnd,
                   l,
+                  c,
+                  bestR,
                   resolution,
                   best.idx,
-                  cod
+                  bandNumbpsPerComp[c],
+                  codInfo
                 );
               }
               if (++cur.x >= pp.numPrecinctsWide) {
@@ -713,6 +772,9 @@ class Codestream {
         const bitDepth = tc.getBitDepth();
         const compQcd = effectiveQcds[c];
         //guardBits = compQcd.quantizationStyle >> 5;
+        // Codeblock style bit 0x08 = vertically stripe-causal context (VSC).
+        const stripeCausal =
+          (tc.getCodingStyleParameters().getCodeblockStyle() & 0x08) !== 0;
 
         // Build resolutions array for idwt2d
         // resolutions[0] holds LL; resolutions[r>0] holds HL/LH/HH
@@ -727,7 +789,7 @@ class Codestream {
           const llW = llBand.subBandRect.getSize().getWidth() - llSx0;
           const llH = llBand.subBandRect.getSize().getHeight() - llSy0;
           const llBuf = new Float64Array(Math.max(llW * llH, 0));
-          this._assembleBand(llBand, llBuf, llW, llSx0, llSy0, compQcd, 0, isReversible, bitDepth);
+          this._assembleBand(llBand, llBuf, llW, llSx0, llSy0, compQcd, 0, isReversible, bitDepth, stripeCausal);
           resolutionsForIDWT.push({ width: llW, height: llH, ll: llBuf, x0: llSx0, y0: llSy0 });
         }
 
@@ -777,7 +839,8 @@ class Codestream {
             compQcd,
             bandIdxHl,
             isReversible,
-            bitDepth
+            bitDepth,
+            stripeCausal
           );
           this._assembleBand(
             lhBand,
@@ -788,7 +851,8 @@ class Codestream {
             compQcd,
             bandIdxLh,
             isReversible,
-            bitDepth
+            bitDepth,
+            stripeCausal
           );
           this._assembleBand(
             hhBand,
@@ -799,7 +863,8 @@ class Codestream {
             compQcd,
             bandIdxHh,
             isReversible,
-            bitDepth
+            bitDepth,
+            stripeCausal
           );
 
           resolutionsForIDWT.push({
@@ -881,12 +946,21 @@ class Codestream {
         const tcW = tile.tileComponents[c].getWidth();
         const tcH = tile.tileComponents[c].getHeight();
         const imgW = siz.getWidth(c);
+        const imgH = siz.getHeight(c);
         const imgComp = imageComps[c];
 
-        for (let row = 0; row < tcH; row++) {
+        // Tiles routinely extend beyond the image area (the nominal grid is
+        // not aligned with x0siz/y0siz). Clip the copy rectangle to the
+        // image: an unclamped negative dstX0/dstY0 would wrap into the
+        // previous line and corrupt unrelated pixels.
+        const row0 = Math.max(0, -dstY0);
+        const row1 = Math.min(tcH, imgH - dstY0);
+        const col0 = Math.max(0, -dstX0);
+        const col1 = Math.min(tcW, imgW - dstX0);
+        for (let row = row0; row < row1; row++) {
           const srcOff = row * tcW;
           const dstOff = (dstY0 + row) * imgW + dstX0;
-          for (let col = 0; col < tcW; col++) {
+          for (let col = col0; col < col1; col++) {
             let v = Math.round(pixels[srcOff + col]) + shift;
             if (v < minVal) {
               v = minVal;
@@ -925,26 +999,32 @@ class Codestream {
    * @param {number} bitDepth - Bit depth of the component.
    * @private
    */
-  _assembleBand(sb, buf, sbW, sx0, sy0, qcd, bandIdx, isReversible, bitDepth) {
-    // Quantization step size (irreversible only).
-    let delta = 1.0;
+  _assembleBand(sb, buf, sbW, sx0, sy0, qcd, bandIdx, isReversible, bitDepth, stripeCausal = false) {
+    // Step size Delta_b for this subband (Rec. T.800 Equation E-3). The
+    // decoder-irreversible path uses log2-gain = 0 for every subband (the
+    // subband gains are folded into the 9/7 synthesis filter normalization
+    // instead, cf. OpenJPEG two_invK), so Rb is the component precision.
+    let stepSize = 1.0;
+    let mantissaOk = false;
     if (!isReversible && bandIdx < qcd.quantizationStepSize.length) {
       const s = qcd.quantizationStepSize[bandIdx];
-      const mant = s & 0x7ff;
-      const guardBits = qcd.quantizationStyle >> 5;
-      // Subband type: 0=LL, 1=HL, 2=LH, 3=HH
-      // Precompute subband type to avoid modulo in loop
-      const sbType = bandIdx === 0 ? 0 : bandIdx % 3 === 0 ? 3 : bandIdx % 3;
-      const sbTypeScale = [1, 2, 2, 4][sbType];
-      delta = (1 + mant / 2048) * sbTypeScale * Math.pow(2, guardBits + (bitDepth || 8) - 32);
+      const twoByte = (qcd.quantizationStyle & 0x1f) === 2;
+      const expn = twoByte ? s >> 11 : s >> 5;
+      const mant = (twoByte ? s & 0x7ff : (s & 0x1f) << 3);
+      stepSize = (1 + mant / 2048) * Math.pow(2, (bitDepth || 8) - expn);
+      mantissaOk = true;
     }
 
     const codeblocks = sb.codeblocks;
     const cbCount = codeblocks.length;
 
+    // Concatenation scratch buffer, reused across multi-chunk codeblocks.
+    let concatBuf = null;
+
     for (let cbIdx = 0; cbIdx < cbCount; cbIdx++) {
       const cb = codeblocks[cbIdx];
-      if (!cb.data || cb.passes === 0 || cb.lengths1 < 2) {
+      const st = cb._pkt;
+      if (!st || st.corrupted || st.numchunks === 0 || st.numsegs === 0) {
         continue;
       }
 
@@ -954,21 +1034,97 @@ class Codestream {
         continue;
       }
 
-      const p = 30 - cb.missingMSBs;
+      const Mb = st.Mb;
+      if (Mb === 0 || Mb > 30) {
+        continue;
+      }
+      // zero_bplanes = (Mb + 1) - numbps (ht_dec.c). numbps > Mb + 1 means an
+      // inconsistent (corrupted) zero-bitplane tree value; skip the codeblock.
+      if (st.numbps > Mb + 1) {
+        continue;
+      }
+      const zeroBplanes = Mb + 1 - st.numbps;
+      if (zeroBplanes > Mb) {
+        continue;
+      }
+
+      // Gather (possibly chunked) codeblock data, mirroring ht_dec.c.
+      const chunks = st.chunks;
+      const numchunks = st.numchunks;
+      let cblkLen = 0;
+      for (let i = 0; i < numchunks; i++) {
+        cblkLen += chunks[i * 2 + 1];
+      }
+      let codedData;
+      let dataOff = 0;
+      if (numchunks === 1) {
+        // Pass an exact byte view of the chunk with offset 0: BlockDecoder's
+        // bit-reader alignment arithmetic assumes the codeblock data starts at
+        // index 0 of the array it is given.
+        codedData = this._codestreamBytes.subarray(chunks[0], chunks[0] + cblkLen);
+      } else {
+        if (concatBuf === null || concatBuf.length < cblkLen) {
+          concatBuf = new Uint8Array(cblkLen);
+        }
+        let off = 0;
+        for (let i = 0; i < numchunks; i++) {
+          const pos = chunks[i * 2];
+          const len = chunks[i * 2 + 1];
+          concatBuf.set(this._codestreamBytes.subarray(pos, pos + len), off);
+          off += len;
+        }
+        codedData = concatBuf;
+      }
+
+      // Per-segment accumulated state (opj_openjp2 ht_dec.c):
+      // passes = segs[0].realNumPasses + segs[1].realNumPasses.
+      let passes = st.segs[0].realNumPasses;
+      passes += st.numsegs > 1 ? st.segs[1].realNumPasses : 0;
+      let lengths1 = passes > 0 ? st.segs[0].len : 0;
+      // OpenJPEG's segs array is zero-initialised: an uninitialised segs[1]
+      // reads as { len: 0, real_num_passes: 0 }. Mirror that here.
+      const lengths2 = passes > 1 && st.numsegs > 1 ? st.segs[1].len : 0;
+      if (passes > 1 && lengths2 === 0) {
+        passes = 1;
+      }
+      if (zeroBplanes === Mb && passes > 1) {
+        passes = 1;
+      }
+      // OpenJPEG's ht_dec hard-fails when the accumulated pass count exceeds
+      // three, but Kakadu multi-layer HT streams legitimately carry many
+      // refinement passes per segment: the HT entropy streams are
+      // bitplane-driven, so the pass type saturates at CUP+SPP+MRP while the
+      // full lengths1/lengths2 byte ranges still carry every accumulated pass.
+      // Clamp instead of rejecting (matches BlockDecoder's own clamping).
+      if (passes > 3) {
+        passes = 3;
+      }
+      if (lengths1 < 2 || lengths1 > cblkLen || lengths1 + lengths2 > cblkLen) {
+        continue;
+      }
+
+      // BlockDecoder follows the Kakadu/OpenJPH convention where missingMSBs
+      // counts the all-zero planes strictly ABOVE the first significant
+      // bitplane, i.e. openjpeg_zero_bplanes - 1 (Kakadu block_dec passes
+      // missing_msbs = mb - numbps - 1 with its own numbps offset). The
+      // OpenJPEG-style guards above still use the standard count.
+      const missingMSBs = zeroBplanes > 0 ? zeroBplanes - 1 : 0;
+      const p = 30 - missingMSBs;
       if (p < 0) {
         continue;
       }
 
       // Decode codeblock and get array of quantized coefficients
       const coeffs = this.blockDecoder.decodeCodeblock(
-        cb.data,
-        0,
-        cb.missingMSBs,
-        cb.passes,
-        cb.lengths1,
-        cb.lengths2 || 0,
+        codedData,
+        dataOff,
+        missingMSBs,
+        passes,
+        lengths1,
+        lengths2,
         cbW,
-        cbH
+        cbH,
+        stripeCausal
       );
       if (!coeffs) {
         continue;
@@ -996,7 +1152,20 @@ class Codestream {
         }
       } else {
         // Irreversible path - floating point with quantization.
+        //
+        // BlockDecoder returns magnitudes normalized to bit 30, i.e. the
+        // decoded int32 codeblock values left-shifted by (30 - (Mb -
+        // zeroBplanes) + 1) = 31 - zeroBplanes - numbps. We replicate
+        // OpenJPEG's gain-free de-quintization exactly: the decoded int32
+        // is multiplied by 0.5 * stepsize, where stepsize omits the subband
+        // gain (log2_gain is forced to 0 by BUG_WEIRD_TWO_INVK in tcd.c).
+        // The subband gains are instead applied inside the inverse DWT by
+        // OpenJPEG's use of two_invK = 2 * invK on the high bands, which
+        // the 9/7 synthesis in Wavelet.js mirrors.
         const mask = 0x7fffffff;
+        const scale = mantissaOk
+          ? 0.5 * stepSize * Math.pow(2, st.numbps + zeroBplanes - 31)
+          : 1.0;
         for (let j = 0; j < cbH; j++) {
           const srcOff = j * cbW;
           const dstOff = dstBase + j * sbW;
@@ -1004,7 +1173,7 @@ class Codestream {
             const val = coeffs[srcOff + i];
             if (val !== 0) {
               const mag = val & mask;
-              buf[dstOff + i] = (val >>> 31 ? -mag : mag) * delta;
+              buf[dstOff + i] = val >>> 31 ? -mag * scale : mag * scale;
             }
           }
         }
@@ -1141,5 +1310,6 @@ class Codestream {
 //#endregion
 
 //#region Exports
+// Temporary debug export removed
 module.exports = Codestream;
 //#endregion

@@ -1,12 +1,9 @@
 const PacketReader = require('./../src/PacketReader');
-const { InclusionTree, TagTree } = require('./../src/Tree');
 
 const chai = require('chai');
 const expect = chai.expect;
 
-function makeCod({ useSop = false, useEph = false } = {}) {
-  return { useSopMarker: () => useSop, useEphMarker: () => useEph };
-}
+const codInfo = { useSop: false, useEph: false, codeblockStyle: 0 };
 
 function makeEmptyResolution() {
   return {
@@ -21,24 +18,13 @@ function makeResolutionWithEmptySb() {
     getPrecinctParameters: () => ({ numPrecinctsWide: 1 }),
   };
 }
-
 // Builds a resolution containing one subband with one 2×2 codeblock in
 // precinct (0,0).  The returned object also exposes the raw `cb` so tests
-// can assert its state after readPacket().
+// can assert its `cb._pkt` state after readPacket().
 function makeResolutionWithCb() {
   const cb = { cbx0: 0, cbx1: 2, cby0: 0, cby1: 2 };
-  const precinct = {
-    px: 0,
-    py: 0,
-    cbsW: 1,
-    cbsH: 1,
-    cbOffX: 0,
-    cbOffY: 0,
-    included: [0],
-    inclusionTree: new InclusionTree(1, 1),
-    zeroBitTree: new TagTree(1, 1),
-  };
-  const sb = { codeblocks: [cb], totalCbsWide: 1, precincts: [precinct] };
+  const precinct = { px: 0, py: 0, cbsW: 1, cbsH: 1, cbOffX: 0, cbOffY: 0 };
+  const sb = { codeblocks: [cb], totalCbsWide: 1, subBandType: 1, precincts: [precinct] };
   return {
     subBands: [sb],
     getPrecinctParameters: () => ({ numPrecinctsWide: 1, numPrecinctsHigh: 1, numPrecincts: 1 }),
@@ -69,14 +55,14 @@ describe('PacketReader', () => {
     it('returns pos unchanged when pos equals dataEnd', () => {
       const pr = new PacketReader();
       const buf = new Uint8Array(4);
-      const result = pr.readPacket(buf, 4, 4, 0, makeEmptyResolution(), 0, makeCod());
+      const result = pr.readPacket(buf, 4, 4, 0, 0, 0, makeEmptyResolution(), 0, [8], codInfo);
       expect(result).to.equal(4);
     });
 
     it('returns pos unchanged when pos exceeds dataEnd', () => {
       const pr = new PacketReader();
       const buf = new Uint8Array(4);
-      const result = pr.readPacket(buf, 10, 4, 0, makeEmptyResolution(), 0, makeCod());
+      const result = pr.readPacket(buf, 10, 4, 0, 0, 0, makeEmptyResolution(), 0, [8], codInfo);
       expect(result).to.equal(10);
     });
   });
@@ -86,14 +72,25 @@ describe('PacketReader', () => {
       const pr = new PacketReader();
       // 0x00 → first bit = 0 (empty-packet indicator)
       const buf = new Uint8Array([0x00]);
-      const result = pr.readPacket(buf, 0, 1, 0, makeEmptyResolution(), 0, makeCod());
+      const result = pr.readPacket(buf, 0, 1, 0, 0, 0, makeEmptyResolution(), 0, [8], codInfo);
       expect(result).to.equal(1);
     });
 
     it('advances pos by one byte when all subBand codeblocks are empty', () => {
       const pr = new PacketReader();
       const buf = new Uint8Array([0x00]);
-      const result = pr.readPacket(buf, 0, 1, 0, makeResolutionWithEmptySb(), 0, makeCod());
+      const result = pr.readPacket(
+        buf,
+        0,
+        1,
+        0,
+        0,
+        0,
+        makeResolutionWithEmptySb(),
+        0,
+        [8],
+        codInfo
+      );
       expect(result).to.equal(1);
     });
   });
@@ -108,9 +105,12 @@ describe('PacketReader', () => {
         0,
         7,
         0,
+        0,
+        0,
         makeEmptyResolution(),
         0,
-        makeCod({ useSop: true })
+        [8],
+        { ...codInfo, useSop: true }
       );
       expect(result).to.equal(7);
     });
@@ -124,9 +124,12 @@ describe('PacketReader', () => {
         0,
         3,
         0,
+        0,
+        0,
         makeEmptyResolution(),
         0,
-        makeCod({ useEph: true })
+        [8],
+        { ...codInfo, useEph: true }
       );
       expect(result).to.equal(3);
     });
@@ -135,65 +138,85 @@ describe('PacketReader', () => {
   describe('readPacket - codeblock data', () => {
     // Packet layout for layer 0 with one 2×2 codeblock in precinct (0,0):
     //
-    //   Bit  0: nonEmpty         = 1
-    //   Bit  1: inclusion(0,0,0) = 1  → leaf immediately → included
-    //   Bit  2: zeroBitplane     = 1  → nextLevel → value=0 → missingMSBs=0
-    //   Bit  3: numPasses bit    = 0  → 1 pass
-    //   Bit  4: lblock extension = 0  → lblock stays 3
-    //   Bits 5–7: len1           = 1,0,0 = 4
+    //   Bit  0:     nonEmpty/present = 1
+    //   Bit  1:     inclusion tree   = 1  → included at layer 1
+    //   Bit  2:     imsb tag-tree    = 1  → zero-bitplane count i = 0
+    //   Bit  3:     numPasses bit    = 0  → 1 new pass
+    //   Bit  4:     length increment = 0  → numlenbits stays 3
+    //   Bits 5–7:   Lblock           = 1,0,0 = 4
     //
     //   Header byte: 1 1 1 0 0 1 0 0 = 0xE4
     //   Body: 4 bytes [0x11, 0x22, 0x33, 0x44]
-    it('writes cb.data, lengths1, lengths2 and passes on first inclusion', () => {
+    it('records segment state and chunk on first inclusion', () => {
       const pr = new PacketReader();
       const res = makeResolutionWithCb();
       const buf = new Uint8Array([0xe4, 0x11, 0x22, 0x33, 0x44]);
-      const result = pr.readPacket(buf, 0, 5, 0, res, 0, makeCod());
+      const result = pr.readPacket(buf, 0, 5, 0, 0, 0, res, 0, [8], codInfo);
 
       expect(result).to.equal(5);
-      expect(res.cb.missingMSBs).to.equal(0);
-      expect(res.cb.lblock).to.equal(3);
-      expect(res.cb.passes).to.equal(1);
-      expect(res.cb.lengths1).to.equal(4);
-      expect(res.cb.lengths2).to.equal(0);
-      expect(Array.from(res.cb.data)).to.deep.equal([0x11, 0x22, 0x33, 0x44]);
+      const st = res.cb._pkt;
+      expect(st).to.exist;
+      expect(st.numbps).to.equal(8);
+      expect(st.numsegs).to.equal(1);
+      expect(st.segs[0].numpasses).to.equal(1);
+      expect(st.segs[0].realNumPasses).to.equal(1);
+      expect(st.segs[0].len).to.equal(4);
+      expect(st.numchunks).to.equal(1);
+      expect(Array.from(st.chunks)).to.deep.equal([1, 4]);
     });
 
-    // Packet layout for layer 1, same codeblock. HTJ2K tag trees are rebuilt
-    // fresh for every packet, so inclusion and missing-MSB bits are read again:
+    // Layer 1 packet for the same codeblock (state persists from layer 0):
+    // the inclusion tree is replaced by a single include bit and the imsb
+    // tag-tree is not transmitted again:
     //
-    //   Bit  0: nonEmpty         = 1
-    //   Bit  1: inclusion(0,0,0) = 1  → leaf immediately → included
-    //   Bit  2: mmsbs unary      = 1  → run ends → value=0 → missingMSBs=0
-    //   Bit  3: numPasses bit    = 0  → 1 pass
-    //   Bit  4: lblock extension = 0  → lblock stays 3
-    //   Bits 5–7: len1           = 0,1,1 = 3
+    //   Bit 0: present = 1
+    //   Bit 1: include = 1
+    //   Bit 2: numPasses bit = 0 → 1 new pass
+    //   Bit 3: length increment = 0
+    //   Bits 4–6: Lblock = 0,1,1 = 3
     //
-    //   Header byte: 1 1 1 0 0 0 1 1 = 0xE3
+    //   Header byte: 1100 0110 → 0xC6
     //   Body: 3 bytes [0xAA, 0xBB, 0xCC]
-    it('replaces cb.data and passes on second inclusion (HTJ2K self-contained segments)', () => {
+    it('accumulates a second segment chunk when included again', () => {
       const pr = new PacketReader();
       const res = makeResolutionWithCb();
 
       // Layer 0
-      pr.readPacket(new Uint8Array([0xe4, 0x11, 0x22, 0x33, 0x44]), 0, 5, 0, res, 0, makeCod());
+      pr.readPacket(
+        new Uint8Array([0xe4, 0x11, 0x22, 0x33, 0x44]),
+        0,
+        5,
+        0,
+        0,
+        0,
+        res,
+        0,
+        [8],
+        codInfo
+      );
 
       // Layer 1
       const result = pr.readPacket(
-        new Uint8Array([0xe3, 0xaa, 0xbb, 0xcc]),
+        new Uint8Array([0xc6, 0xaa, 0xbb, 0xcc]),
         0,
         4,
         1,
+        0,
+        0,
         res,
         0,
-        makeCod()
+        [8],
+        codInfo
       );
 
       expect(result).to.equal(4);
-      expect(res.cb.passes).to.equal(1);
-      expect(res.cb.lengths1).to.equal(3);
-      expect(res.cb.lengths2).to.equal(0);
-      expect(Array.from(res.cb.data)).to.deep.equal([0xaa, 0xbb, 0xcc]);
+      const st = res.cb._pkt;
+      expect(st.numsegs).to.equal(1);
+      expect(st.segs[0].numpasses).to.equal(2);
+      expect(st.segs[0].realNumPasses).to.equal(2);
+      expect(st.segs[0].len).to.equal(7);
+      expect(st.numchunks).to.equal(2);
+      expect(Array.from(st.chunks)).to.deep.equal([1, 4, 1, 3]);
     });
   });
 

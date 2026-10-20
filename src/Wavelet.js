@@ -1,4 +1,14 @@
 //#region Wavelet
+// Float32 constants from OpenJPEG's dwt.c, matched to the exact values the
+// C code uses (opj_K, two_invK, and the four lifting steps as passed to
+// opj_v8dwt_decode_step2 with the negated opj_dwt_* constants).
+const OPJ97_K = Math.fround(1.230174105);
+const OPJ97_TWO_INVK = Math.fround(1.625732422);
+const OPJ97_C_DELTA = Math.fround(-0.443506852); // -opj_dwt_delta
+const OPJ97_C_GAMMA = Math.fround(-0.882911075); // -opj_dwt_gamma
+const OPJ97_C_BETA = Math.fround(0.052980118); // -opj_dwt_beta
+const OPJ97_C_ALPHA = Math.fround(1.586134342); // -opj_dwt_alpha
+
 class Wavelet {
   /**
    * Creates an instance of Wavelet.
@@ -21,6 +31,13 @@ class Wavelet {
       this._iDwt1dCas1(l, lo, h, ho, ll, hl, out, oo, true);
     this._bound1dCas1Irv97 = (l, lo, h, ho, ll, hl, out, oo) =>
       this._iDwt1dCas1(l, lo, h, ho, ll, hl, out, oo, false);
+    this._bound1dIrv97OpjCas0 = (l, lo, h, ho, sn, dn, out, oo) =>
+      this._iDwt1dIrv97Opj(l, lo, h, ho, sn, dn, out, oo, 0);
+    this._bound1dIrv97OpjCas1 = (l, lo, h, ho, sn, dn, out, oo) =>
+      this._iDwt1dIrv97Opj(l, lo, h, ho, sn, dn, out, oo, 1);
+    this._opj97L = new Float64Array(0);
+    this._opj97H = new Float64Array(0);
+    this._opj97Out = new Float64Array(0);
     this._vColL = new Float64Array(0);
     this._vColH = new Float64Array(0);
     // Reusable buffers for 2D transform
@@ -551,8 +568,8 @@ class Wavelet {
     const lhBH = lhH || hHgt;
 
     const idwt1d = (casX === 0)
-      ? (isReversible ? this._bound1dRev53Offset : this._bound1dIrv97Offset)
-      : (isReversible ? this._bound1dCas1Rev53 : this._bound1dCas1Irv97);
+      ? (isReversible ? this._bound1dRev53Offset : this._bound1dIrv97OpjCas0)
+      : (isReversible ? this._bound1dCas1Rev53 : this._bound1dIrv97OpjCas1);
 
     const out = new Float64Array(resW * resH);
 
@@ -584,14 +601,14 @@ class Wavelet {
     // lifting can operate on whole rows directly with a small rolling window,
     // reading vertL/vertH rows sequentially and writing contiguous output
     // rows. This avoids the transposed-block staging entirely.
-    if (casY === 0) {
-      if (isReversible) {
+    if (isReversible) {
+      if (casY === 0) {
         this._iDwtVerticalRev53(vertL, vertH, lHgt, hHgt, resW, out);
       } else {
-        this._iDwtVerticalIrv97(vertL, vertH, lHgt, hHgt, resW, out);
+        this._iDwtVerticalCas1(vertL, vertH, lHgt, hHgt, resW, out, true);
       }
     } else {
-      this._iDwtVerticalCas1(vertL, vertH, lHgt, hHgt, resW, out, isReversible);
+      this._opj97VerticalCols(vertL, vertH, lHgt, hHgt, resW, out, casY);
     }
 
     return out;
@@ -806,6 +823,238 @@ class Wavelet {
         out[emitLow + x] = l2;
         out[emitHigh + x] = hPend[x] - alpha * (l2Prv[x] + l2);
       }
+    }
+  }
+
+  /**
+   * One lifting stage of the OpenJPEG scalar synthesis, a literal port of the
+   * opj_v8dwt_decode_step2() scalar-emulation path (the code a stock MSVC
+   * build compiles to when __SSE__ is not defined). Updates tgt[0..tgtLen) in
+   * place from the partner band part[partOff..partOff+partLen).
+   *
+   * fam === 0 reproduces the stage whose window starts AT the band base
+   * (v == w, cas == 0 low pass and cas == 1 high pass): lane 0 of every
+   * 8-sample vector clamps its left tap to index 0, so element 0 uses
+   * part[0] twice, and out-of-range partner reads (i >= partLen) yield 0.
+   * fam === 1 reproduces the stage whose window starts one element into the
+   * partner band (cas == 1 low, cas == 0 high): every element uses
+   * (part[i] + part[i + 1]).
+   *
+   * The C loop bound is (uint32) min(size_t, OPJ_UINT32): a negative
+   * "remaining" (the dn - a / sn - b differences of the degenerate b11
+   * resolutions) wraps to a huge value, which lets the loop walk the entire
+   * target band while the partner reads stray past the band into the
+   * neighboring code-block buffer. Passing oob === null models those reads as
+   * 0; passing a buffer models the real (neighbour garbage) reads.
+   *
+   * @method
+   * @private
+   * @param {number} c Float32 additive coefficient (already negated).
+   * @param {number} fam Stage family: 0 = base-window (doubling at index 0), 1 = shifted.
+   * @param {number} tgtLen Target band length.
+   * @param {number} partLen Partner band length.
+   * @param {Float64Array} tgt Target band (updated in place).
+   * @param {Float64Array} part Partner band.
+   * @param {number} partOff Start offset of the partner window in part.
+   * @param {number} m C 32-bit size parameter (may be negative).
+   */
+  _opj97Stage(c, fam, tgtLen, partLen, tgt, part, partOff, m) {
+    const pr = k => (k >= 0 && k < partLen ? part[partOff + k] : 0);
+    // (uint32) m: negative values wrap past the band end.
+    const um = m < 0 ? m + 4294967296 : m;
+    const end = um < tgtLen ? um : tgtLen;
+    if (fam === 0) {
+      for (let i = 0; i < end; i++) {
+        tgt[i] += (pr(i > 0 ? i - 1 : 0) + pr(i)) * c;
+      }
+      if (m >= 0 && m < tgtLen) {
+        tgt[m] += 2 * pr(m > 0 ? m - 1 : 0) * c;
+      }
+    } else {
+      for (let i = 0; i < end; i++) {
+        tgt[i] += (pr(i) + pr(i + 1)) * c;
+      }
+      if (m >= 0 && m < tgtLen) {
+        tgt[m] += 2 * pr(m) * c;
+      }
+    }
+  }
+
+  /**
+   * Run the OpenJPEG opj_v8dwt_decode() synthesis for one 1-D window pair on
+   * the scratch bands L[0..sn) and H[0..dn) (values updated in place).
+   * Returns false when the level is gated off, in which case the bands must
+   * be deinterleaved without any scaling (opj_dwt_interleave_* semantics).
+   * @method
+   * @private
+   * @param {number} sn Low band length.
+   * @param {number} dn High band length.
+   * @param {number} cas Code-alternating-synthesis flag.
+   * @param {Float64Array} L Low band scratch.
+   * @param {Float64Array} H High band scratch.
+   * @returns {boolean} true if the lifting cascade ran.
+   */
+  _opj97DecodeCore(sn, dn, cas, L, H) {
+    // opj_v8dwt_decode gate: cas == 0 skips unless (dn > 0 || sn > 1);
+    // cas == 1 skips unless (sn > 0 || dn > 1). When skipped, the level is a
+    // plain deinterleave without any scaling.
+    if (cas === 0 ? !(dn > 0 || sn > 1) : !(sn > 0 || dn > 1)) {
+      return false;
+    }
+    // opj_v8dwt_decode_step1 on both windows: K on the low band, two_invK on
+    // the high band.
+    for (let i = 0; i < sn; i++) {
+      L[i] = L[i] * OPJ97_K;
+    }
+    for (let i = 0; i < dn; i++) {
+      H[i] = H[i] * OPJ97_TWO_INVK;
+    }
+    // The four opj_v8dwt_decode_step2 calls of opj_v8dwt_decode, in source
+    // order: (low, -delta), (high, -gamma), (low, -beta), (high, -alpha).
+    // With a == cas and b === 1 - cas, the size arguments clamp to
+    //     low  stages:  min(sn, dn - cas)
+    //     high stages:  min(dn, sn - b)
+    // The low stages use the base-window family when cas == 0 and the shifted
+    // family when cas == 1 (the a == 1 offset starts the window one sample
+    // into the partner band); the high stages are the mirror image.
+    const lowFam = cas;
+    const highFam = 1 - (cas & 1);
+    const lowM = sn < dn - cas ? sn : dn - cas;
+    const highM = dn < sn - (1 - cas) ? dn : sn - (1 - cas);
+    this._opj97Stage(OPJ97_C_DELTA, lowFam, sn, dn, L, H, 0, lowM);
+    this._opj97Stage(OPJ97_C_GAMMA, highFam, dn, sn, H, L, 0, highM);
+    this._opj97Stage(OPJ97_C_BETA, lowFam, sn, dn, L, H, 0, lowM);
+    this._opj97Stage(OPJ97_C_ALPHA, highFam, dn, sn, H, L, 0, highM);
+    return true;
+  }
+
+  /**
+   * Scratch accessor for the two 1-D band buffers used by the OpenJPEG-style
+   * 9/7 synthesis.
+   * @method
+   * @private
+   * @param {number} sn Low band length.
+   * @param {number} dn High band length.
+   * @returns {Array<Float64Array>} [low, high] scratch buffers.
+   */
+  _opj97Bands(sn, dn) {
+    const n = Math.max(1, sn, dn);
+    if (this._opj97L.length < n) {
+      const buf = new Float64Array(n);
+      this._opj97L = buf;
+      this._opj97H = new Float64Array(n);
+    }
+    const L = this._opj97L;
+    const H = this._opj97H;
+    for (let i = sn; i < n; i++) {
+      L[i] = 0;
+    }
+    for (let i = dn; i < n; i++) {
+      H[i] = 0;
+    }
+    return [L, H];
+  }
+
+  /**
+   * 1-D inverse 9/7 synthesis with OpenJPEG's exact numerics: the
+   * opj_v8dwt_decode gate, the K / two_invK gain-compensated step1 scaling,
+   * and the four boundary-clamped lifting stages.
+   * @method
+   * @private
+   * @param {Float64Array} lSrc Low band source.
+   * @param {number} lOff Low band start.
+   * @param {Float64Array} hSrc High band source.
+   * @param {number} hOff High band start.
+   * @param {number} sn Low band length.
+   * @param {number} dn High band length.
+   * @param {Float64Array} out Destination buffer.
+   * @param {number} outOff Destination start.
+   * @param {number} cas Code-alternating-synthesis flag.
+   */
+  _iDwt1dIrv97Opj(lSrc, lOff, hSrc, hOff, sn, dn, out, outOff, cas) {
+    const [L, H] = this._opj97Bands(sn, dn);
+    for (let i = 0; i < sn; i++) {
+      L[i] = lSrc[lOff + i];
+    }
+    for (let i = 0; i < dn; i++) {
+      H[i] = hSrc[hOff + i];
+    }
+    if (!this._opj97DecodeCore(sn, dn, cas, L, H)) {
+      // gate path (opj_dwt_interleave_v only): no synthesis, no scaling
+      if (cas === 0) {
+        for (let n = 0; n < sn; n++) {
+          out[outOff + 2 * n] = L[n];
+        }
+        for (let k = 0; k < dn; k++) {
+          out[outOff + 2 * k + 1] = H[k];
+        }
+      } else {
+        for (let j = 0; j < dn; j++) {
+          out[outOff + 2 * j] = H[j];
+        }
+        for (let j = 0; j < sn; j++) {
+          out[outOff + 2 * j + 1] = L[j];
+        }
+      }
+      return;
+    }
+    if (cas === 0) {
+      for (let n = 0; n < sn; n++) {
+        out[outOff + 2 * n] = L[n];
+      }
+      for (let k = 0; k < dn; k++) {
+        out[outOff + 2 * k + 1] = H[k];
+      }
+    } else {
+      for (let j = 0; j < dn; j++) {
+        out[outOff + 2 * j] = H[j];
+      }
+      for (let j = 0; j < sn; j++) {
+        out[outOff + 2 * j + 1] = L[j];
+      }
+    }
+  }
+
+  /**
+   * Vertical 9/7 synthesis column-at-a-time with OpenJPEG's exact numerics.
+   * @method
+   * @private
+   * @param {Float64Array} vertL Low vertical band, lHgt rows of resW.
+   * @param {Float64Array} vertH High vertical band, hHgt rows of resW.
+   * @param {number} lHgt Number of low rows.
+   * @param {number} hHgt Number of high rows.
+   * @param {number} resW Row width.
+   * @param {Float64Array} out Output rows buffer (resH x resW).
+   * @param {number} cas Code-alternating-synthesis flag.
+   */
+  _opj97VerticalCols(vertL, vertH, lHgt, hHgt, resW, out, cas) {
+    const [L, H] = this._opj97Bands(lHgt, hHgt);
+    for (let x = 0; x < resW; x++) {
+      for (let j = 0; j < lHgt; j++) {
+        L[j] = vertL[j * resW + x];
+      }
+      for (let j = 0; j < hHgt; j++) {
+        H[j] = vertH[j * resW + x];
+      }
+      this._opj97DecodeCore(lHgt, hHgt, cas, L, H);
+      if (cas === 0) {
+        for (let n = 0; n < lHgt; n++) {
+          out[(2 * n) * resW + x] = L[n];
+        }
+        for (let k = 0; k < hHgt; k++) {
+          out[(2 * k + 1) * resW + x] = H[k];
+        }
+      } else {
+        for (let j = 0; j < hHgt; j++) {
+          out[(2 * j) * resW + x] = H[j];
+        }
+        for (let j = 0; j < lHgt; j++) {
+          out[(2 * j + 1) * resW + x] = L[j];
+        }
+      }
+      // When gated (runs === false) the column keeps the un-scaled
+      // deinterleave above, matching opj_dwt_interleave_v / _h with no
+      // following synthesis.
     }
   }
 
