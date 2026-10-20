@@ -343,13 +343,16 @@ describe('SubBand', () => {
     expect(sb.precincts.length).to.equal(1);
   });
 
-  it('should attach inclusionTree and zeroBitTree to each precinct', () => {
+  it('should not attach legacy tag trees to precincts', () => {
     const rect = new Rectangle(new Point(0, 0), new Size(4, 4));
     const pp = makePrecinctParams({ numW: 1, numH: 1, pw: 8, ph: 8, psW: 4, psH: 4 });
     const cp = makeCodeblockParams(2, 2);
     const sb = new SubBand(0, SubBandType.Hl, rect, pp, cp);
-    expect(sb.precincts[0].inclusionTree).to.not.equal(undefined);
-    expect(sb.precincts[0].zeroBitTree).to.not.equal(undefined);
+    // Packet header decoding uses the persistent TgtTree instances owned by
+    // PacketReader; precincts no longer carry per-decode InclusionTree /
+    // TagTree allocations.
+    expect(sb.precincts[0].inclusionTree).to.equal(undefined);
+    expect(sb.precincts[0].zeroBitTree).to.equal(undefined);
   });
 
   it('should produce no codeblocks when the sub-band rect is empty', () => {

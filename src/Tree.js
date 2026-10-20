@@ -7,9 +7,9 @@ const { MathFunction } = require('./Helpers');
  * by level, with each level's dimensions ceil-halved from the one below
  * (floor((n + 1) / 2)); the final level holds the single root node.
  *
- * Unlike the simplified push-style TagTree / InclusionTree below (which are
- * legacy helpers built per precinct by Coding.js and no longer used by the
- * decoding path), these trees PERSIST across packets of a tile and are only
+ * Unlike the simplified push-style TagTree / InclusionTree below (legacy
+ * public-API helpers that are no longer used by the decoding path), these
+ * trees PERSIST across packets of a tile and are only
  * reset when a packet of quality layer 0 is parsed for a given
  * (component, resolution, precinct) position (T.800 B.10.2, OpenJPEG
  * opj_t2_read_packet_header). This is what enables multi-layer decoding:

@@ -1,6 +1,5 @@
 const { Point, Rectangle, Size } = require('./Helpers');
 const { SubBandType } = require('./Constants');
-const { TagTree, InclusionTree } = require('./Tree');
 
 //#region Tile
 class Tile {
@@ -646,9 +645,6 @@ class SubBand {
             cbOffY,
             cbsW,
             cbsH,
-            inclusionTree: new InclusionTree(cbsW, cbsH),
-            zeroBitTree: new TagTree(cbsW, cbsH),
-            included: new Uint8Array(cbsW * cbsH),
           });
         }
       }
