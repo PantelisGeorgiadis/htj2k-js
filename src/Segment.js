@@ -717,7 +717,7 @@ class QcdSegment extends Segment {
    * @returns {Array<number>} The quantization step size.
    */
   getQuantizationStepSize() {
-    return this.quantizationStyle;
+    return this.quantizationStepSize;
   }
 
   /**
