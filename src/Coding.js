@@ -204,7 +204,7 @@ class TileComponent {
   /**
    * Gets signedness for tile component.
    * @method
-   * @returns {number} The signedness.
+   * @returns {boolean} The signedness.
    */
   isSigned() {
     return this.siz.isSigned(this.getTileComponentIndex());
@@ -519,6 +519,8 @@ class SubBand {
    * Create codeblocks and precincts for this sub-band.
    * @method
    * @private
+   * @param {Object} precinctParams - Precinct parameters (sizes and counts).
+   * @param {Object} codeblockParams - Codeblock parameters (sizes and origin).
    */
   _createCodeblocksAndPrecincts(precinctParams, codeblockParams) {
     const x0 = this.subBandRect.getPoint().getX();

@@ -83,7 +83,7 @@ class BlockDecoder {
    * @param {number} lengths2 - Length of refinement passes (SPP+MRP).
    * @param {number} width - Codeblock width.
    * @param {number} height - Codeblock height.
-   * @param {boolean} stripeCausal - Vertically stripe-causal context (codeblock style bit 0x08).
+   * @param {boolean} [stripeCausal] - Vertically stripe-causal context (codeblock style bit 0x08).
    * @returns {Int32Array|null} Decoded coefficients (height×width), or null on failure.
    */
   decodeCodeblock(
@@ -1562,7 +1562,14 @@ class BlockDecoder {
 
   /**
    * Forward reader init that accepts an explicit state (used for SPP).
+   * @method
    * @private
+   * @param {Object} st - Forward VLC decoder state.
+   * @param {Uint8Array} data - Coded data buffer.
+   * @param {number} offset - Start offset in data.
+   * @param {number} size - Number of readable bytes.
+   * @param {number} fillByte - Byte value used outside the segment.
+   * @returns {Object} The initialized state (same object as st).
    */
   _frwdInit2(st, data, offset, size, fillByte) {
     st.data = data;
@@ -1590,7 +1597,10 @@ class BlockDecoder {
 
   /**
    * Forward reader fetch with explicit state.
+   * @method
    * @private
+   * @param {Object} st - Forward VLC decoder state.
+   * @returns {number} Next 32 bits of VLC data.
    */
   _frwdFetch2(st) {
     if (st.bits < 32) {
@@ -1605,7 +1615,10 @@ class BlockDecoder {
 
   /**
    * Forward reader advance with explicit state.
+   * @method
    * @private
+   * @param {Object} st - Forward VLC decoder state.
+   * @param {number} numBits - Number of bits to advance.
    */
   _frwdAdvance2(st, numBits) {
     if (numBits > 0) {
@@ -1625,7 +1638,13 @@ class BlockDecoder {
 
   /**
    * Initialize the MRP backward reader.
+   * @method
    * @private
+   * @param {Uint8Array} data - Coded data buffer.
+   * @param {number} offset - Start offset of the codeblock in data.
+   * @param {number} lcup - Length of the cleanup pass segment.
+   * @param {number} len2 - Length of the refinement passes segment.
+   * @returns {Object} Initialized MRP decoder state.
    */
   _mrpInit(data, offset, lcup, len2) {
     const st = this._mrpState;
@@ -1654,7 +1673,9 @@ class BlockDecoder {
   /**
    * Read and unstuff up to 4 bytes from the MRP backward stream.
    * Zero-fills when the segment is exhausted.
+   * @method
    * @private
+   * @param {Object} st - MRP decoder state.
    */
   _mrpRead(st) {
     if (st.bits > 32) {
@@ -1700,7 +1721,10 @@ class BlockDecoder {
 
   /**
    * Fetch up to 32 bits from the MRP backward reader.
+   * @method
    * @private
+   * @param {Object} st - MRP decoder state.
+   * @returns {number} Next 32 bits of MRP data.
    */
   _mrpFetch(st) {
     if (st.bits < 32) {
@@ -1715,7 +1739,10 @@ class BlockDecoder {
 
   /**
    * Consume bits from the MRP backward reader.
+   * @method
    * @private
+   * @param {Object} st - MRP decoder state.
+   * @param {number} numBits - Number of bits to consume.
    */
   _mrpAdvance(st, numBits) {
     if (numBits > 0) {
@@ -1735,7 +1762,10 @@ class BlockDecoder {
 
   /**
    * Population count for a 32-bit value.
+   * @method
    * @private
+   * @param {number} x - 32-bit value.
+   * @returns {number} Number of set bits in x.
    */
   _popCount32(x) {
     x = x - ((x >>> 1) & 0x55555555);

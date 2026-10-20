@@ -28,7 +28,8 @@ class Decoder {
    * @returns {number} header.bitDepth bitDepth.
    * @returns {boolean} header.signed signed.
    * @returns {number} header.components components.
-   * @returns {boolean} header.decompositionLevels decompositionLevels.
+   * @returns {boolean} header.reversible reversible.
+   * @returns {number} header.decompositionLevels decompositionLevels.
    * @returns {string} header.progressionOrder progressionOrder.
    * @throws Error if buffer does not contain an HTJ2K codestream.
    */
@@ -150,6 +151,7 @@ class Decoder {
    * Determines whether the data is a raw codestream or a file (boxed codestream).
    * @method
    * @private
+   * @param {ArrayBuffer} buffer - Data buffer.
    * @returns {J2kFormat} The determined format type.
    */
   _determineJ2kFormat(buffer) {

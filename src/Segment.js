@@ -121,7 +121,7 @@ class SizSegment extends Segment {
   /**
    * Gets the profile.
    * @method
-   * @returns {string} The profile.
+   * @returns {number} The profile.
    */
   getProfile() {
     return this.profile;
@@ -422,6 +422,7 @@ class CapSegment extends Segment {
    * Counts the numbers of set bits in an integer.
    * @method
    * @private
+   * @param {number} val - Integer to count set bits of.
    * @returns {number} The numbers of set bits in an integer.
    */
   _populationCount(val) {
@@ -975,9 +976,9 @@ class TlmSegment extends Segment {
   }
 
   /**
-   * Gets Length of marker segment in bytes.
+   * Gets Length of marker segment in bytes (including the marker).
    * @method
-   * @returns {number} Length of marker segment in bytes (not including the marker).
+   * @returns {number} Length of marker segment in bytes (including the marker).
    */
   getLtlm() {
     return this.ltlm;
@@ -1007,7 +1008,7 @@ class TlmSegment extends Segment {
    * be derived from the length of this marker segment or from a non-zero TNsot
    * parameter, if present.
    * @method
-   * @returns {number} Array of tile numbers for tile-parts, if more than one
+   * @returns {Array<number>} Array of tile numbers for tile-parts, if more than one
    * tile-part per tile.
    */
   getTtlm() {

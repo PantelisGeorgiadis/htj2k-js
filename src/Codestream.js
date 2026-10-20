@@ -59,7 +59,8 @@ class Codestream {
    * @returns {number} header.bitDepth bitDepth.
    * @returns {boolean} header.signed signed.
    * @returns {number} header.components components.
-   * @returns {boolean} header.decompositionLevels decompositionLevels.
+   * @returns {boolean} header.reversible reversible.
+   * @returns {number} header.decompositionLevels decompositionLevels.
    * @returns {string} header.progressionOrder progressionOrder.
    * @throws Error if codestream ends before finding a tile segment and
    * SIZ, COD and QCD segments are not found.
@@ -990,6 +991,7 @@ class Codestream {
    * @param {number} bandIdx - Quantization step-size index for this subband.
    * @param {boolean} isReversible - True for 5/3 reversible wavelet.
    * @param {number} bitDepth - Bit depth of the component.
+   * @param {boolean} [stripeCausal] - Vertically stripe-causal context (codeblock style bit 0x08).
    * @private
    */
   _assembleBand(
@@ -1203,7 +1205,7 @@ class Codestream {
    * @returns {Object} segment Read next segment result object.
    * @returns {number} segment.position position.
    * @returns {Marker} segment.marker marker.
-   * @returns {number} segment.size size.
+   * @returns {number} segment.length length.
    * @returns {ArrayBuffer} segment.data data.
    */
   _readNextSegment() {

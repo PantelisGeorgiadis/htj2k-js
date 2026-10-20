@@ -841,6 +841,7 @@ const uVlcBias = new Uint8Array(256 + 64);
  * look up the decoding information based on the prefix of the VLC codeword.
  * @param {Uint16Array} tbl - The VLC decoding table to be filled.
  * @param {Array} src - The source table containing VLC codeword information.
+ * @private
  */
 function _buildVlcTable(tbl, src) {
   // For each source entry, all 7-bit codeword prefixes whose low scwdLen bits

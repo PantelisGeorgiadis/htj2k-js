@@ -437,7 +437,8 @@ class Wavelet {
    * @param {number} hOff - Offset of high-band samples in source array.
    * @param {number} lLen - Number of low-band samples.
    * @param {number} hLen - Number of high-band samples.
-   * @param {Float64Array} out - Output array of length (outOff - outOff + lLen + hLen).
+   * @param {Float64Array} out - Output array receiving lLen + hLen interleaved
+   * samples starting at outOff.
    * @param {number} outOff - Offset for output samples in output array.
    * @param {boolean} isReversible - true for 5/3, false for 9/7.
    */
@@ -542,13 +543,13 @@ class Wavelet {
    * @param {number} resW - Target resolution width.
    * @param {number} resH - Target resolution height.
    * @param {boolean} isReversible - true for 5/3, false for 9/7.
-   * @param {number} casX - Horizontal parity of the source resolution (0|1).
-   * @param {number} casY - Vertical parity of the source resolution (0|1).
-   * @param {number} hlW - Actual HL band width (defaults to low width).
-   * @param {number} hlH - Actual HL band height (defaults to low height).
-   * @param {number} lhW - Actual LH band width (defaults to high width).
-   * @param {number} lhH - Actual LH band height (defaults to high height).
-   * @returns {Float64Array}
+   * @param {number} [casX] - Horizontal parity of the source resolution (0|1).
+   * @param {number} [casY] - Vertical parity of the source resolution (0|1).
+   * @param {number} [hlW] - Actual HL band width (defaults to low width).
+   * @param {number} [hlH] - Actual HL band height (defaults to low height).
+   * @param {number} [lhW] - Actual LH band width (defaults to high width).
+   * @param {number} [lhH] - Actual LH band height (defaults to high height).
+   * @returns {Float64Array} Reconstructed resolution-level samples (out buffer).
    */
   _iDwt2dLevel(
     llBuf,
@@ -866,14 +867,14 @@ class Wavelet {
    *
    * @method
    * @private
-   * @param {number} c Float32 additive coefficient (already negated).
-   * @param {number} fam Stage family: 0 = base-window (doubling at index 0), 1 = shifted.
-   * @param {number} tgtLen Target band length.
-   * @param {number} partLen Partner band length.
-   * @param {Float64Array} tgt Target band (updated in place).
-   * @param {Float64Array} part Partner band.
-   * @param {number} partOff Start offset of the partner window in part.
-   * @param {number} m C 32-bit size parameter (may be negative).
+   * @param {number} c - Float32 additive coefficient (already negated).
+   * @param {number} fam - Stage family: 0 = base-window (doubling at index 0), 1 = shifted.
+   * @param {number} tgtLen - Target band length.
+   * @param {number} partLen - Partner band length.
+   * @param {Float64Array} tgt - Target band (updated in place).
+   * @param {Float64Array} part - Partner band.
+   * @param {number} partOff - Start offset of the partner window in part.
+   * @param {number} m - C 32-bit size parameter (may be negative).
    */
   _opj97Stage(c, fam, tgtLen, partLen, tgt, part, partOff, m) {
     const pr = (k) => (k >= 0 && k < partLen ? part[partOff + k] : 0);
@@ -904,11 +905,11 @@ class Wavelet {
    * be deinterleaved without any scaling (opj_dwt_interleave_* semantics).
    * @method
    * @private
-   * @param {number} sn Low band length.
-   * @param {number} dn High band length.
-   * @param {number} cas Code-alternating-synthesis flag.
-   * @param {Float64Array} L Low band scratch.
-   * @param {Float64Array} H High band scratch.
+   * @param {number} sn - Low band length.
+   * @param {number} dn - High band length.
+   * @param {number} cas - Code-alternating-synthesis flag.
+   * @param {Float64Array} L - Low band scratch.
+   * @param {Float64Array} H - High band scratch.
    * @returns {boolean} true if the lifting cascade ran.
    */
   _opj97DecodeCore(sn, dn, cas, L, H) {
@@ -950,8 +951,8 @@ class Wavelet {
    * 9/7 synthesis.
    * @method
    * @private
-   * @param {number} sn Low band length.
-   * @param {number} dn High band length.
+   * @param {number} sn - Low band length.
+   * @param {number} dn - High band length.
    * @returns {Array<Float64Array>} [low, high] scratch buffers.
    */
   _opj97Bands(sn, dn) {
@@ -978,15 +979,15 @@ class Wavelet {
    * and the four boundary-clamped lifting stages.
    * @method
    * @private
-   * @param {Float64Array} lSrc Low band source.
-   * @param {number} lOff Low band start.
-   * @param {Float64Array} hSrc High band source.
-   * @param {number} hOff High band start.
-   * @param {number} sn Low band length.
-   * @param {number} dn High band length.
-   * @param {Float64Array} out Destination buffer.
-   * @param {number} outOff Destination start.
-   * @param {number} cas Code-alternating-synthesis flag.
+   * @param {Float64Array} lSrc - Low band source.
+   * @param {number} lOff - Low band start.
+   * @param {Float64Array} hSrc - High band source.
+   * @param {number} hOff - High band start.
+   * @param {number} sn - Low band length.
+   * @param {number} dn - High band length.
+   * @param {Float64Array} out - Destination buffer.
+   * @param {number} outOff - Destination start.
+   * @param {number} cas - Code-alternating-synthesis flag.
    */
   _iDwt1dIrv97Opj(lSrc, lOff, hSrc, hOff, sn, dn, out, outOff, cas) {
     const [L, H] = this._opj97Bands(sn, dn);
@@ -1036,13 +1037,13 @@ class Wavelet {
    * Vertical 9/7 synthesis column-at-a-time with OpenJPEG's exact numerics.
    * @method
    * @private
-   * @param {Float64Array} vertL Low vertical band, lHgt rows of resW.
-   * @param {Float64Array} vertH High vertical band, hHgt rows of resW.
-   * @param {number} lHgt Number of low rows.
-   * @param {number} hHgt Number of high rows.
-   * @param {number} resW Row width.
-   * @param {Float64Array} out Output rows buffer (resH x resW).
-   * @param {number} cas Code-alternating-synthesis flag.
+   * @param {Float64Array} vertL - Low vertical band, lHgt rows of resW.
+   * @param {Float64Array} vertH - High vertical band, hHgt rows of resW.
+   * @param {number} lHgt - Number of low rows.
+   * @param {number} hHgt - Number of high rows.
+   * @param {number} resW - Row width.
+   * @param {Float64Array} out - Output rows buffer (resH x resW).
+   * @param {number} cas - Code-alternating-synthesis flag.
    */
   _opj97VerticalCols(vertL, vertH, lHgt, hHgt, resW, out, cas) {
     const [L, H] = this._opj97Bands(lHgt, hHgt);
