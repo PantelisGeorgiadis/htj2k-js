@@ -1,4 +1,4 @@
-const { TgtTree } = require('./Tree');
+const { TagTree } = require('./Tree');
 
 //#region PacketReader
 /**
@@ -268,7 +268,7 @@ class PacketReader {
           for (;;) {
             const seg = st.segs[segno];
             seg.numnewpasses = segno === 0 ? 1 : n;
-            const bits = st.numlenbits + TgtTree._floorLog2(seg.numnewpasses);
+            const bits = st.numlenbits + TagTree._floorLog2(seg.numnewpasses);
             if (bits > 32) {
               throw new Error(
                 `Invalid bit number ${bits} in packet header ` +
@@ -422,8 +422,8 @@ class PacketReader {
         });
       }
       band = {
-        inclTree: new TgtTree(precinct.cbsW, precinct.cbsH),
-        imsbTree: new TgtTree(precinct.cbsW, precinct.cbsH),
+        inclTree: new TagTree(precinct.cbsW, precinct.cbsH),
+        imsbTree: new TagTree(precinct.cbsW, precinct.cbsH),
         cbs,
       };
       this._state.set(key, band);

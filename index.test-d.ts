@@ -69,9 +69,8 @@ expectError(new helpers.Rectangle('p', 's'));
 // TagTree
 const tagTree = new tree.TagTree(4, 4);
 expectType<tree.TagTree>(tagTree);
-expectType<void>(tagTree.reset(0, 0));
-expectType<void>(tagTree.incrementValue());
-expectType<boolean>(tagTree.nextLevel());
+expectType<void>(tagTree.reset());
+expectType<boolean>(tagTree.decode(() => 0, 0, 1));
 
 expectError(new tree.TagTree());
 
@@ -335,14 +334,6 @@ expectType<number>(
 );
 
 expectError(packetReader.readPacket());
-
-// TgtTree (via tree namespace)
-const tgtTree = new tree.TgtTree(4, 4);
-expectType<tree.TgtTree>(tgtTree);
-expectType<void>(tgtTree.reset());
-expectType<boolean>(tgtTree.decode(() => 0, 0, 1));
-
-expectError(new tree.TgtTree());
 
 // Wavelet
 const wavelet = new Wavelet();

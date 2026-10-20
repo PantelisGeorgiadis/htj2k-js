@@ -1,90 +1,7 @@
-const { TagTree, InclusionTree, TgtTree } = require('./../src/Tree');
+const { TagTree, InclusionTree } = require('./../src/Tree');
 
 const chai = require('chai');
 const expect = chai.expect;
-
-describe('TagTree', () => {
-  it('should create the correct number of levels for a 1×1 tree', () => {
-    const tree = new TagTree(1, 1);
-    // log2(max(1,1)) = 0, so levelsLength = 1
-    expect(tree.levels.length).to.equal(1);
-  });
-
-  it('should create the correct number of levels for a 4×4 tree', () => {
-    const tree = new TagTree(4, 4);
-    // log2(4) = 2, so levelsLength = 3
-    expect(tree.levels.length).to.equal(3);
-  });
-
-  it('should halve dimensions at each level', () => {
-    const tree = new TagTree(4, 4);
-    expect(tree.levels[0].width).to.equal(4);
-    expect(tree.levels[1].width).to.equal(2);
-    expect(tree.levels[2].width).to.equal(1);
-  });
-
-  it('should have initial value of 0', () => {
-    const tree = new TagTree(2, 2);
-    expect(tree.value).to.equal(0);
-  });
-
-  it('should position currentLevel at the top after reset on a fresh tree', () => {
-    const tree = new TagTree(2, 2);
-    tree.reset(0, 0);
-    // Fresh tree has no defined items; reset walks all levels, ends at top (levelsLength-1 = 1)
-    expect(tree.currentLevel).to.equal(tree.levels.length - 1);
-  });
-
-  it('should delete this.value after reset', () => {
-    const tree = new TagTree(2, 2);
-    tree.reset(0, 0);
-    expect(tree.value).to.equal(undefined);
-  });
-
-  it('should incrementValue at the current level', () => {
-    const tree = new TagTree(2, 2);
-    tree.reset(0, 0);
-    const topLevel = tree.levels[tree.currentLevel];
-    const idx = topLevel.index;
-    expect(topLevel.items[idx]).to.equal(0);
-    tree.incrementValue();
-    expect(topLevel.items[idx]).to.equal(1);
-  });
-
-  it('should return true from nextLevel when deeper levels remain', () => {
-    const tree = new TagTree(2, 2);
-    tree.reset(0, 0);
-    // currentLevel is 1 (top of 2-level tree); moving down to 0 should return true
-    expect(tree.nextLevel()).to.equal(true);
-    expect(tree.currentLevel).to.equal(0);
-  });
-
-  it('should return false from nextLevel when at the leaf and set this.value', () => {
-    const tree = new TagTree(1, 1);
-    tree.reset(0, 0);
-    // 1-level tree: currentLevel is 0 (already at leaf after reset)
-    const result = tree.nextLevel();
-    expect(result).to.equal(false);
-    expect(tree.value).to.not.equal(undefined);
-  });
-
-  it('should propagate incremented value down through nextLevel', () => {
-    const tree = new TagTree(2, 2);
-    tree.reset(0, 0);
-    tree.incrementValue(); // top-level item becomes 1
-    tree.nextLevel(); // descend to level 0, propagating value
-    tree.nextLevel(); // descend past leaf, sets this.value
-    expect(tree.value).to.equal(1);
-  });
-
-  it('should support non-square dimensions', () => {
-    const tree = new TagTree(4, 2);
-    // log2(max(4,2)) = log2(4) = 2, levelsLength = 3
-    expect(tree.levels.length).to.equal(3);
-    expect(tree.levels[0].width).to.equal(4);
-    expect(tree.levels[0].height).to.equal(2);
-  });
-});
 
 describe('InclusionTree', () => {
   it('should create the correct number of levels for a 1×1 tree', () => {
@@ -184,21 +101,21 @@ describe('InclusionTree', () => {
   });
 });
 
-describe('TgtTree', () => {
+describe('TagTree', () => {
   it('should allocate ceil-halved level sizes (2x2 tree has 5 nodes)', () => {
-    const tree = new TgtTree(2, 2);
+    const tree = new TagTree(2, 2);
     expect(tree.numNodes).to.equal(5);
     expect(tree.dimsW).to.deep.equal([2, 1]);
     expect(tree.dimsH).to.deep.equal([2, 1]);
   });
 
   it('should allocate a single node for a 1x1 tree', () => {
-    const tree = new TgtTree(1, 1);
+    const tree = new TagTree(1, 1);
     expect(tree.numNodes).to.equal(1);
   });
 
   it('should initialize all values to 999 after reset', () => {
-    const tree = new TgtTree(3, 3);
+    const tree = new TagTree(3, 3);
     tree.value[0] = 5;
     tree.reset();
     expect(tree.value[0]).to.equal(999);
@@ -206,7 +123,7 @@ describe('TgtTree', () => {
   });
 
   it('should decode 1-bit-included value below threshold', () => {
-    const tree = new TgtTree(1, 1);
+    const tree = new TagTree(1, 1);
     // Bit 1 at value 0 sets the node to 0 which is below threshold 1.
     expect(tree.decode(() => 1, 0, 1)).to.equal(true);
     // Value is now known: repeated decode consumes no bits.
@@ -225,14 +142,14 @@ describe('TgtTree', () => {
   });
 
   it('should decode not-included when the bit is 0', () => {
-    const tree = new TgtTree(1, 1);
+    const tree = new TagTree(1, 1);
     expect(tree.decode(() => 0, 0, 1)).to.equal(false);
     expect(tree.value[0]).to.equal(999);
     expect(tree.low[0]).to.equal(1);
   });
 
   it('should link leaf parents to the root on a 2x2 tree', () => {
-    const tree = new TgtTree(2, 2);
+    const tree = new TagTree(2, 2);
     for (let leaf = 0; leaf < 4; leaf++) {
       expect(tree.parent[leaf]).to.equal(4);
     }
@@ -240,10 +157,10 @@ describe('TgtTree', () => {
   });
 
   it('should compute floor(log2) correctly', () => {
-    expect(TgtTree._floorLog2(1)).to.equal(0);
-    expect(TgtTree._floorLog2(2)).to.equal(1);
-    expect(TgtTree._floorLog2(3)).to.equal(1);
-    expect(TgtTree._floorLog2(8)).to.equal(3);
-    expect(TgtTree._floorLog2(255)).to.equal(7);
+    expect(TagTree._floorLog2(1)).to.equal(0);
+    expect(TagTree._floorLog2(2)).to.equal(1);
+    expect(TagTree._floorLog2(3)).to.equal(1);
+    expect(TagTree._floorLog2(8)).to.equal(3);
+    expect(TagTree._floorLog2(255)).to.equal(7);
   });
 });

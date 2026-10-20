@@ -34,7 +34,7 @@ const {
 } = require('./Constants');
 const { Resolution, SubBand, Tile, TileComponent, TilePart } = require('./Coding');
 const { Point, Rectangle, Size } = require('./Helpers');
-const { InclusionTree, TagTree, TgtTree } = require('./Tree');
+const { InclusionTree, TagTree } = require('./Tree');
 const BinaryReader = require('./BinaryReader');
 const BlockDecoder = require('./BlockDecoder');
 const Codestream = require('./Codestream');
@@ -109,7 +109,6 @@ const constants = {
 const tree = {
   InclusionTree,
   TagTree,
-  TgtTree,
 };
 //#endregion
 

@@ -1,24 +1,22 @@
 const { MathFunction } = require('./Helpers');
 
-//#region TgtTree
+//#region TagTree
 /**
  * Tag-tree coder exactly as specified in ITU-T T.800 Annex H and implemented
  * by OpenJPEG (src/lib/openjp2/tgt.c). Nodes are stored leaves-first, level
  * by level, with each level's dimensions ceil-halved from the one below
  * (floor((n + 1) / 2)); the final level holds the single root node.
  *
- * Unlike the simplified push-style TagTree / InclusionTree below (legacy
- * public-API helpers that are no longer used by the decoding path), these
- * trees PERSIST across packets of a tile and are only
- * reset when a packet of quality layer 0 is parsed for a given
- * (component, resolution, precinct) position (T.800 B.10.2, OpenJPEG
- * opj_t2_read_packet_header). This is what enables multi-layer decoding:
- * the inclusion tree encodes "included at layer L" and the missing-MSBs
- * tree encodes the zero-bitplane count exactly once per codeblock.
+ * These trees PERSIST across packets of a tile and are only reset when a
+ * packet of quality layer 0 is parsed for a given (component, resolution,
+ * precinct) position (T.800 B.10.2, OpenJPEG opj_t2_read_packet_header).
+ * This is what enables multi-layer decoding: the inclusion tree encodes
+ * "included at layer L" and the missing-MSBs tree encodes the zero-bitplane
+ * count exactly once per codeblock.
  */
-class TgtTree {
+class TagTree {
   /**
-   * Creates an instance of TgtTree.
+   * Creates an instance of TagTree.
    * @constructor
    * @param {number} numleafsh - Number of node columns (tree width).
    * @param {number} numleafsv - Number of node rows (tree height).
@@ -144,95 +142,6 @@ class TgtTree {
       ++n;
     }
     return n;
-  }
-}
-//#endregion
-
-//#region TagTree
-class TagTree {
-  /**
-   * Creates an instance of TagTree.
-   * @constructor
-   * @param {number} width - Width.
-   * @param {number} height - Height.
-   */
-  constructor(width, height) {
-    const levelsLength = MathFunction.log2(Math.max(width, height)) + 1;
-    this.levels = [];
-    this.currentLevel = 0;
-    this.value = 0;
-
-    for (let i = 0; i < levelsLength; i++) {
-      const level = {
-        width: width,
-        height: height,
-        items: [],
-      };
-      this.levels.push(level);
-
-      width = Math.ceil(width / 2);
-      height = Math.ceil(height / 2);
-    }
-  }
-
-  /**
-   * Resets the tree.
-   * @method
-   * @param {number} i - Index.
-   * @param {number} j - Index.
-   */
-  reset(i, j) {
-    let currentLevel = 0;
-    let value = 0;
-    let level;
-    while (currentLevel < this.levels.length) {
-      level = this.levels[currentLevel];
-      const index = i + j * level.width;
-      if (level.items[index] !== undefined) {
-        value = level.items[index];
-        break;
-      }
-      level.index = index;
-      i >>= 1;
-      j >>= 1;
-      currentLevel++;
-    }
-    currentLevel--;
-    level = this.levels[currentLevel];
-    level.items[level.index] = value;
-    this.currentLevel = currentLevel;
-    delete this.value;
-  }
-
-  /**
-   * Increments the current level's item value.
-   * @method
-   */
-  incrementValue() {
-    const level = this.levels[this.currentLevel];
-    level.items[level.index]++;
-  }
-
-  /**
-   * Advances the current level.
-   * @method
-   */
-  nextLevel() {
-    let currentLevel = this.currentLevel;
-    let level = this.levels[currentLevel];
-    let value = level.items[level.index];
-    currentLevel--;
-    if (currentLevel < 0) {
-      this.value = value;
-
-      return false;
-    }
-
-    this.currentLevel = currentLevel;
-    level = this.levels[currentLevel];
-    level.items[level.index] = value;
-
-    return true;
   }
 }
 //#endregion
@@ -377,5 +286,5 @@ class InclusionTree {
 //#endregion
 
 //#region Exports
-module.exports = { InclusionTree, TagTree, TgtTree };
+module.exports = { InclusionTree, TagTree };
 //#endregion

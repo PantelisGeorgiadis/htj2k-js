@@ -199,9 +199,9 @@ declare class Rectangle {
   toString(): string;
 }
 
-declare class TgtTree {
+declare class TagTree {
   /**
-   * Creates an instance of TgtTree.
+   * Creates an instance of TagTree.
    */
   constructor(numleafsh: number, numleafsv: number);
 
@@ -214,28 +214,6 @@ declare class TgtTree {
    * Decodes the value at a leaf. Bit reads go through the supplied callback.
    */
   decode(readBit: () => number, leafno: number, threshold: number): boolean;
-}
-
-declare class TagTree {
-  /**
-   * Creates an instance of TagTree.
-   */
-  constructor(width: number, height: number);
-
-  /**
-   * Resets the tree.
-   */
-  reset(i: number, j: number): void;
-
-  /**
-   * Increments the current level's item value.
-   */
-  incrementValue(): void;
-
-  /**
-   * Advances the current level.
-   */
-  nextLevel(): boolean;
 }
 
 declare class InclusionTree {
@@ -1263,7 +1241,6 @@ export namespace helpers {
 export namespace tree {
   export { TagTree };
   export { InclusionTree };
-  export { TgtTree };
 }
 
 export namespace boxes {
