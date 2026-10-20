@@ -349,8 +349,7 @@ describe('SubBand', () => {
     const cp = makeCodeblockParams(2, 2);
     const sb = new SubBand(0, SubBandType.Hl, rect, pp, cp);
     // Packet header decoding uses the persistent TagTree instances owned by
-    // PacketReader; precincts no longer carry per-decode InclusionTree /
-    // TagTree allocations.
+    // PacketReader; precincts no longer carry per-decode tag tree allocations.
     expect(sb.precincts[0].inclusionTree).to.equal(undefined);
     expect(sb.precincts[0].zeroBitTree).to.equal(undefined);
   });

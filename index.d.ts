@@ -216,48 +216,6 @@ declare class TagTree {
   decode(readBit: () => number, leafno: number, threshold: number): boolean;
 }
 
-declare class InclusionTree {
-  /**
-   * Creates an instance of InclusionTree.
-   */
-  constructor(width: number, height: number);
-
-  /**
-   * Resets the tree.
-   */
-  reset(i: number, j: number, stopValue: number): void;
-
-  /**
-   * Increments the current level's item value.
-   */
-  incrementValue(): void;
-
-  /**
-   * Advances the current level.
-   */
-  nextLevel(): boolean;
-
-  /**
-   * Checks whether the current level is zero.
-   */
-  isLeaf(): boolean;
-
-  /**
-   * Checks whether the current level's item value is above threshold.
-   */
-  isAboveThreshold(): boolean;
-
-  /**
-   * Checks whether the current level's status is above zero.
-   */
-  isKnown(): boolean;
-
-  /**
-   * Sets current level's status to one.
-   */
-  setKnown(): void;
-}
-
 declare class Box {
   /**
    * Creates an instance of Box.
@@ -1240,7 +1198,6 @@ export namespace helpers {
 
 export namespace tree {
   export { TagTree };
-  export { InclusionTree };
 }
 
 export namespace boxes {

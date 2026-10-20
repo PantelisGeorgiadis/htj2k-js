@@ -74,19 +74,6 @@ expectType<boolean>(tagTree.decode(() => 0, 0, 1));
 
 expectError(new tree.TagTree());
 
-// InclusionTree
-const inclusionTree = new tree.InclusionTree(4, 4);
-expectType<tree.InclusionTree>(inclusionTree);
-expectType<void>(inclusionTree.reset(0, 0, 1));
-expectType<void>(inclusionTree.incrementValue());
-expectType<boolean>(inclusionTree.nextLevel());
-expectType<boolean>(inclusionTree.isLeaf());
-expectType<boolean>(inclusionTree.isAboveThreshold());
-expectType<boolean>(inclusionTree.isKnown());
-expectType<void>(inclusionTree.setKnown());
-
-expectError(new tree.InclusionTree());
-
 // Box
 const buf = new ArrayBuffer(16);
 const box = new boxes.Box(1, 0, buf);
