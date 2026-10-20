@@ -323,7 +323,8 @@ class Codestream {
    * @param {number} component - Component index.
    * @returns {NltSegment|undefined} Matching NLT segment, or undefined.
    */
-  _findNltSegment(component) {    let global;
+  _findNltSegment(component) {
+    let global;
     for (const s of this.segments) {
       if (s.getMarker() !== Marker.Nlt) {
         continue;
@@ -437,7 +438,7 @@ class Codestream {
     const codInfo = {
       useSop: cod.useSopMarker(),
       useEph: cod.useEphMarker(),
-      codeblockStyle: cod.getCodeblockStyle()
+      codeblockStyle: cod.getCodeblockStyle(),
     };
 
     for (const tile of this.tiles) {
@@ -454,9 +455,7 @@ class Codestream {
       const buildBandNumbps = (qcdSeg) => {
         const guardBits = qcdSeg.quantizationStyle >> 5;
         const noQuant = (qcdSeg.quantizationStyle & 0x1f) === 0;
-        return qcdSeg.quantizationStepSize.map(
-          (s) => (noQuant ? s >> 3 : s >> 11) + guardBits - 1
-        );
+        return qcdSeg.quantizationStepSize.map((s) => (noQuant ? s >> 3 : s >> 11) + guardBits - 1);
       };
 
       // Position-anchored progressions (RPCL/PCRL/CPRL) require per
@@ -488,12 +487,9 @@ class Codestream {
         const ppx0 = (pp.precinctX0 + cur.x) * pp.precinctWidth;
         const ppy0 = (pp.precinctY0 + cur.y) * pp.precinctHeight;
         return {
-          x: Math.max(
-            progTileX0,
-            ppx0 * scale * tc.getSubSamplingX()
-          ),
+          x: Math.max(progTileX0, ppx0 * scale * tc.getSubSamplingX()),
           y: Math.max(progTileY0, ppy0 * scale * tc.getSubSamplingY()),
-          idx
+          idx,
         };
       };
 
@@ -616,11 +612,7 @@ class Codestream {
                 if (!cand) {
                   continue;
                 }
-                if (
-                  !best ||
-                  cand.y < best.y ||
-                  (cand.y === best.y && cand.x < best.x)
-                ) {
+                if (!best || cand.y < best.y || (cand.y === best.y && cand.x < best.x)) {
                   best = cand;
                   bestC = c;
                 }
@@ -628,8 +620,7 @@ class Codestream {
               if (!best) {
                 break;
               }
-              const resolution =
-                tile.tileComponents[bestC].resolutions[r];
+              const resolution = tile.tileComponents[bestC].resolutions[r];
               const pp = resolution.getPrecinctParameters();
               const cur = progCursors[bestC][r];
               for (let l = 0; l < qualityLayers; l++) {
@@ -672,10 +663,7 @@ class Codestream {
                   cand.y < best.y ||
                   (cand.y === best.y && cand.x < best.x) ||
                   (cand.y === best.y && cand.x === best.x && c < bestC) ||
-                  (cand.y === best.y &&
-                    cand.x === best.x &&
-                    c === bestC &&
-                    r < bestR)
+                  (cand.y === best.y && cand.x === best.x && c === bestC && r < bestR)
                 ) {
                   best = cand;
                   bestC = c;
@@ -686,8 +674,7 @@ class Codestream {
             if (!best) {
               break;
             }
-            const resolution =
-              tile.tileComponents[bestC].resolutions[bestR];
+            const resolution = tile.tileComponents[bestC].resolutions[bestR];
             const pp = resolution.getPrecinctParameters();
             const cur = progCursors[bestC][bestR];
             for (let l = 0; l < qualityLayers; l++) {
@@ -723,11 +710,7 @@ class Codestream {
                 if (!cand) {
                   continue;
                 }
-                if (
-                  !best ||
-                  cand.y < best.y ||
-                  (cand.y === best.y && cand.x < best.x)
-                ) {
+                if (!best || cand.y < best.y || (cand.y === best.y && cand.x < best.x)) {
                   best = cand;
                   bestR = r;
                 }
@@ -773,8 +756,7 @@ class Codestream {
         const compQcd = effectiveQcds[c];
         //guardBits = compQcd.quantizationStyle >> 5;
         // Codeblock style bit 0x08 = vertically stripe-causal context (VSC).
-        const stripeCausal =
-          (tc.getCodingStyleParameters().getCodeblockStyle() & 0x08) !== 0;
+        const stripeCausal = (tc.getCodingStyleParameters().getCodeblockStyle() & 0x08) !== 0;
 
         // Build resolutions array for idwt2d
         // resolutions[0] holds LL; resolutions[r>0] holds HL/LH/HH
@@ -789,7 +771,18 @@ class Codestream {
           const llW = llBand.subBandRect.getSize().getWidth() - llSx0;
           const llH = llBand.subBandRect.getSize().getHeight() - llSy0;
           const llBuf = new Float64Array(Math.max(llW * llH, 0));
-          this._assembleBand(llBand, llBuf, llW, llSx0, llSy0, compQcd, 0, isReversible, bitDepth, stripeCausal);
+          this._assembleBand(
+            llBand,
+            llBuf,
+            llW,
+            llSx0,
+            llSy0,
+            compQcd,
+            0,
+            isReversible,
+            bitDepth,
+            stripeCausal
+          );
           resolutionsForIDWT.push({ width: llW, height: llH, ll: llBuf, x0: llSx0, y0: llSy0 });
         }
 
@@ -878,7 +871,7 @@ class Codestream {
             hlW: hlW,
             hlH: hlH,
             lhW: lhW,
-            lhH: lhH
+            lhH: lhH,
           });
         }
 
@@ -999,7 +992,18 @@ class Codestream {
    * @param {number} bitDepth - Bit depth of the component.
    * @private
    */
-  _assembleBand(sb, buf, sbW, sx0, sy0, qcd, bandIdx, isReversible, bitDepth, stripeCausal = false) {
+  _assembleBand(
+    sb,
+    buf,
+    sbW,
+    sx0,
+    sy0,
+    qcd,
+    bandIdx,
+    isReversible,
+    bitDepth,
+    stripeCausal = false
+  ) {
     // Step size Delta_b for this subband (Rec. T.800 Equation E-3). The
     // decoder-irreversible path uses log2-gain = 0 for every subband (the
     // subband gains are folded into the 9/7 synthesis filter normalization
@@ -1010,7 +1014,7 @@ class Codestream {
       const s = qcd.quantizationStepSize[bandIdx];
       const twoByte = (qcd.quantizationStyle & 0x1f) === 2;
       const expn = twoByte ? s >> 11 : s >> 5;
-      const mant = (twoByte ? s & 0x7ff : (s & 0x1f) << 3);
+      const mant = twoByte ? s & 0x7ff : (s & 0x1f) << 3;
       stepSize = (1 + mant / 2048) * Math.pow(2, (bitDepth || 8) - expn);
       mantissaOk = true;
     }
@@ -1163,9 +1167,7 @@ class Codestream {
         // OpenJPEG's use of two_invK = 2 * invK on the high bands, which
         // the 9/7 synthesis in Wavelet.js mirrors.
         const mask = 0x7fffffff;
-        const scale = mantissaOk
-          ? 0.5 * stepSize * Math.pow(2, st.numbps + zeroBplanes - 31)
-          : 1.0;
+        const scale = mantissaOk ? 0.5 * stepSize * Math.pow(2, st.numbps + zeroBplanes - 31) : 1.0;
         for (let j = 0; j < cbH; j++) {
           const srcOff = j * cbW;
           const dstOff = dstBase + j * sbW;

@@ -599,8 +599,10 @@ class SubBand {
     // Parity is 1 for the high-pass side of the corresponding axis.
     const xShift = this.subBandType === SubBandType.Ll ? 0 : 1;
     const yShift = this.subBandType === SubBandType.Ll ? 0 : 1;
-    const xParity = this.subBandType === SubBandType.Hl || this.subBandType === SubBandType.Hh ? 1 : 0;
-    const yParity = this.subBandType === SubBandType.Lh || this.subBandType === SubBandType.Hh ? 1 : 0;
+    const xParity =
+      this.subBandType === SubBandType.Hl || this.subBandType === SubBandType.Hh ? 1 : 0;
+    const yParity =
+      this.subBandType === SubBandType.Lh || this.subBandType === SubBandType.Hh ? 1 : 0;
     const mapBoundary = (v, parity, shift) =>
       shift === 0 ? v : Math.floor((v - parity + ((1 << shift) - 1)) / (1 << shift));
 

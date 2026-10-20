@@ -199,6 +199,23 @@ declare class Rectangle {
   toString(): string;
 }
 
+declare class TgtTree {
+  /**
+   * Creates an instance of TgtTree.
+   */
+  constructor(numleafsh: number, numleafsv: number);
+
+  /**
+   * Resets all node values.
+   */
+  reset(): void;
+
+  /**
+   * Decodes the value at a leaf. Bit reads go through the supplied callback.
+   */
+  decode(readBit: () => number, leafno: number, threshold: number): boolean;
+}
+
 declare class TagTree {
   /**
    * Creates an instance of TagTree.
@@ -686,7 +703,34 @@ declare class QcdSegment extends Segment {
   /**
    * Gets quantization step size.
    */
-  getQuantizationStepSize(): number;
+  getQuantizationStepSize(): Array<number>;
+}
+
+declare class QccSegment extends Segment {
+  /**
+   * Creates an instance of QccSegment.
+   */
+  constructor(position: number, buffer: ArrayBuffer);
+
+  /**
+   * Gets the component index this segment applies to.
+   */
+  getComponent(): number;
+
+  /**
+   * Gets decomposition levels.
+   */
+  getDecompositionLevels(): number;
+
+  /**
+   * Gets quantization style.
+   */
+  getQuantizationStyle(): number;
+
+  /**
+   * Gets quantization step size.
+   */
+  getQuantizationStepSize(): Array<number>;
 }
 
 declare class SotSegment extends Segment {
@@ -1064,6 +1108,23 @@ declare class PacketReader {
   constructor();
 
   /**
+   * Clears all per-tile persistent state (tag-trees, segments, chunks).
+   * Must be called before the packet loops of each new tile.
+   */
+  resetState(): void;
+
+  /**
+   * Sets a packed-packet-header (PPM/PPT) source whose bytes will be used for
+   * packet header bit-reading until clearPphSource is called.
+   */
+  setPphSource(buffer: Uint8Array, pos: number, end: number): void;
+
+  /**
+   * Clears any previously installed packed-packet-header source.
+   */
+  clearPphSource(): void;
+
+  /**
    * Reads one HTJ2K packet header and body.
    */
   readPacket(
@@ -1071,9 +1132,18 @@ declare class PacketReader {
     pos: number,
     dataEnd: number,
     layer: number,
+    compIdx: number,
+    resoIdx: number,
     resolution: Resolution,
     precinctIdx: number,
-    cod: CodSegment
+    bandNumbps: Array<number>,
+    codInfo: {
+      useSop?: boolean;
+      useEph?: boolean;
+      maxNumLayers?: number;
+      codeblockStyle?: number;
+      [key: string]: unknown;
+    }
   ): number;
 }
 
@@ -1193,6 +1263,7 @@ export namespace helpers {
 export namespace tree {
   export { TagTree };
   export { InclusionTree };
+  export { TgtTree };
 }
 
 export namespace boxes {
@@ -1210,6 +1281,7 @@ export namespace segments {
   export { CapSegment };
   export { CodSegment };
   export { ComSegment };
+  export { QccSegment };
   export { QcdSegment };
   export { Segment };
   export { SizSegment };

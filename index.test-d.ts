@@ -209,7 +209,15 @@ const qcdSeg = new segments.QcdSegment(0, buf);
 expectType<segments.QcdSegment>(qcdSeg);
 expectType<number>(qcdSeg.getDecompositionLevels());
 expectType<number>(qcdSeg.getQuantizationStyle());
-expectType<number>(qcdSeg.getQuantizationStepSize());
+expectType<Array<number>>(qcdSeg.getQuantizationStepSize());
+
+// QccSegment
+const qccSeg = new segments.QccSegment(0, buf);
+expectType<segments.QccSegment>(qccSeg);
+expectType<number>(qccSeg.getComponent());
+expectType<number>(qccSeg.getDecompositionLevels());
+expectType<number>(qccSeg.getQuantizationStyle());
+expectType<Array<number>>(qccSeg.getQuantizationStepSize());
 
 // SotSegment
 const sotSeg = new segments.SotSegment(0, buf);
@@ -316,9 +324,25 @@ expectError(blockDecoder.decodeCodeblock(codedData, 0, 0, 1, 64, 0, 4));
 // PacketReader
 const packetReader = new PacketReader();
 expectType<PacketReader>(packetReader);
-expectType<number>(packetReader.readPacket(codedData, 0, 64, 0, resolution, 0, codSeg));
+expectType<void>(packetReader.resetState());
+expectType<void>(packetReader.setPphSource(codedData, 0, 64));
+expectType<void>(packetReader.clearPphSource());
+expectType<number>(
+  packetReader.readPacket(codedData, 0, 64, 0, 0, 0, resolution, 0, [8], {
+    useSop: false,
+    useEph: false,
+  })
+);
 
 expectError(packetReader.readPacket());
+
+// TgtTree (via tree namespace)
+const tgtTree = new tree.TgtTree(4, 4);
+expectType<tree.TgtTree>(tgtTree);
+expectType<void>(tgtTree.reset());
+expectType<boolean>(tgtTree.decode(() => 0, 0, 1));
+
+expectError(new tree.TgtTree());
 
 // Wavelet
 const wavelet = new Wavelet();

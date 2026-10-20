@@ -86,7 +86,17 @@ class BlockDecoder {
    * @param {boolean} stripeCausal - Vertically stripe-causal context (codeblock style bit 0x08).
    * @returns {Int32Array|null} Decoded coefficients (height×width), or null on failure.
    */
-  decodeCodeblock(codedData, offset, missingMSBs, numPasses, lengths1, lengths2, width, height, stripeCausal = false) {
+  decodeCodeblock(
+    codedData,
+    offset,
+    missingMSBs,
+    numPasses,
+    lengths1,
+    lengths2,
+    width,
+    height,
+    stripeCausal = false
+  ) {
     if (lengths1 < 2) {
       return null;
     }

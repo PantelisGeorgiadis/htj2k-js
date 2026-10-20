@@ -100,18 +100,10 @@ describe('PacketReader', () => {
       const pr = new PacketReader();
       // Bytes 0–5: SOP (0xff 0x91 + 4 padding),  byte 6: empty-packet byte
       const buf = new Uint8Array([0xff, 0x91, 0x00, 0x02, 0x00, 0x00, 0x00]);
-      const result = pr.readPacket(
-        buf,
-        0,
-        7,
-        0,
-        0,
-        0,
-        makeEmptyResolution(),
-        0,
-        [8],
-        { ...codInfo, useSop: true }
-      );
+      const result = pr.readPacket(buf, 0, 7, 0, 0, 0, makeEmptyResolution(), 0, [8], {
+        ...codInfo,
+        useSop: true,
+      });
       expect(result).to.equal(7);
     });
 
@@ -119,18 +111,10 @@ describe('PacketReader', () => {
       const pr = new PacketReader();
       // Byte 0: empty-packet bit (0x00),  bytes 1–2: EPH (0xff 0x92)
       const buf = new Uint8Array([0x00, 0xff, 0x92]);
-      const result = pr.readPacket(
-        buf,
-        0,
-        3,
-        0,
-        0,
-        0,
-        makeEmptyResolution(),
-        0,
-        [8],
-        { ...codInfo, useEph: true }
-      );
+      const result = pr.readPacket(buf, 0, 3, 0, 0, 0, makeEmptyResolution(), 0, [8], {
+        ...codInfo,
+        useEph: true,
+      });
       expect(result).to.equal(3);
     });
   });

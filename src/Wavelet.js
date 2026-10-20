@@ -476,18 +476,17 @@ class Wavelet {
     const hw = this._scratchHw;
     // Clamp-repeat taps into the opposite band ([0, hLen-1] for low updates,
     // [0, lLen-1] for high updates).
-    const cH = (i) => (i < 0 ? 0 : (i >= hLen ? hLen - 1 : i));
-    const cL = (i) => (i < 0 ? 0 : (i >= lLen ? lLen - 1 : i));
+    const cH = (i) => (i < 0 ? 0 : i >= hLen ? hLen - 1 : i);
+    const cL = (i) => (i < 0 ? 0 : i >= lLen ? lLen - 1 : i);
 
     if (isReversible) {
-      const lBase = lOff, hBase = hOff;
+      const lBase = lOff,
+        hBase = hOff;
       for (let j = 0; j < lLen; j++) {
-        lw[j] = lSrc[lBase + j] -
-          ((hSrc[hBase + cH(j)] + hSrc[hBase + cH(j + 1)] + 2) >> 2);
+        lw[j] = lSrc[lBase + j] - ((hSrc[hBase + cH(j)] + hSrc[hBase + cH(j + 1)] + 2) >> 2);
       }
       for (let j = 0; j < hLen; j++) {
-        out[outOff + 2 * j] = hSrc[hBase + j] +
-          ((lw[cL(j)] + lw[cL(j - 1)]) >> 1);
+        out[outOff + 2 * j] = hSrc[hBase + j] + ((lw[cL(j)] + lw[cL(j - 1)]) >> 1);
       }
       for (let j = 0; j < lLen; j++) {
         out[outOff + 2 * j + 1] = lw[j];
@@ -551,14 +550,27 @@ class Wavelet {
    * @param {number} lhH - Actual LH band height (defaults to high height).
    * @returns {Float64Array}
    */
-  _iDwt2dLevel(llBuf, hlBuf, lhBuf, hhBuf, resW, resH, isReversible,
-    casX = 0, casY = 0, hlW = 0, hlH = 0, lhW = 0, lhH = 0) {
+  _iDwt2dLevel(
+    llBuf,
+    hlBuf,
+    lhBuf,
+    hhBuf,
+    resW,
+    resH,
+    isReversible,
+    casX = 0,
+    casY = 0,
+    hlW = 0,
+    hlH = 0,
+    lhW = 0,
+    lhH = 0
+  ) {
     // Band sizes follow from the resolution parity (Paraschiva §3.4): odd
     // origins swap the ceil/floor split so that HL/LH keep the even (low)
     // row/column origin. Actual band dimensions from the code-stream
     // rectangles are used when provided (truncated bands).
-    const lWid = (casX === 0) ? Math.ceil(resW / 2) : Math.floor(resW / 2);
-    const lHgt = (casY === 0) ? Math.ceil(resH / 2) : Math.floor(resH / 2);
+    const lWid = casX === 0 ? Math.ceil(resW / 2) : Math.floor(resW / 2);
+    const lHgt = casY === 0 ? Math.ceil(resH / 2) : Math.floor(resH / 2);
     const hWid = resW - lWid;
     const hHgt = resH - lHgt;
     // HL is high-in-x / low-in-y; LH is low-in-x / high-in-y.
@@ -567,9 +579,14 @@ class Wavelet {
     const lhBW = lhW || lWid;
     const lhBH = lhH || hHgt;
 
-    const idwt1d = (casX === 0)
-      ? (isReversible ? this._bound1dRev53Offset : this._bound1dIrv97OpjCas0)
-      : (isReversible ? this._bound1dCas1Rev53 : this._bound1dIrv97OpjCas1);
+    const idwt1d =
+      casX === 0
+        ? isReversible
+          ? this._bound1dRev53Offset
+          : this._bound1dIrv97OpjCas0
+        : isReversible
+          ? this._bound1dCas1Rev53
+          : this._bound1dIrv97OpjCas1;
 
     const out = new Float64Array(resW * resH);
 
@@ -859,7 +876,7 @@ class Wavelet {
    * @param {number} m C 32-bit size parameter (may be negative).
    */
   _opj97Stage(c, fam, tgtLen, partLen, tgt, part, partOff, m) {
-    const pr = k => (k >= 0 && k < partLen ? part[partOff + k] : 0);
+    const pr = (k) => (k >= 0 && k < partLen ? part[partOff + k] : 0);
     // (uint32) m: negative values wrap past the band end.
     const um = m < 0 ? m + 4294967296 : m;
     const end = um < tgtLen ? um : tgtLen;
@@ -1039,14 +1056,14 @@ class Wavelet {
       this._opj97DecodeCore(lHgt, hHgt, cas, L, H);
       if (cas === 0) {
         for (let n = 0; n < lHgt; n++) {
-          out[(2 * n) * resW + x] = L[n];
+          out[2 * n * resW + x] = L[n];
         }
         for (let k = 0; k < hHgt; k++) {
           out[(2 * k + 1) * resW + x] = H[k];
         }
       } else {
         for (let j = 0; j < hHgt; j++) {
-          out[(2 * j) * resW + x] = H[j];
+          out[2 * j * resW + x] = H[j];
         }
         for (let j = 0; j < lHgt; j++) {
           out[(2 * j + 1) * resW + x] = L[j];
@@ -1112,15 +1129,15 @@ class Wavelet {
       for (let j = 0; j < hHgt; j++) {
         hw[j] = vertH[j * resW + x];
       }
-      const cH = (i) => (i < 0 ? 0 : (i >= hHgt ? hHgt - 1 : i));
-      const cL = (i) => (i < 0 ? 0 : (i >= lHgt ? lHgt - 1 : i));
+      const cH = (i) => (i < 0 ? 0 : i >= hHgt ? hHgt - 1 : i);
+      const cL = (i) => (i < 0 ? 0 : i >= lHgt ? lHgt - 1 : i);
 
       if (isReversible) {
         for (let j = 0; j < lHgt; j++) {
           lw[j] -= (hw[cH(j)] + hw[cH(j + 1)] + 2) >> 2;
         }
         for (let j = 0; j < hHgt; j++) {
-          out[(2 * j) * resW + x] = hw[j] + ((lw[cL(j)] + lw[cL(j - 1)]) >> 1);
+          out[2 * j * resW + x] = hw[j] + ((lw[cL(j)] + lw[cL(j - 1)]) >> 1);
         }
         for (let j = 0; j < lHgt; j++) {
           out[(2 * j + 1) * resW + x] = lw[j];
@@ -1145,7 +1162,7 @@ class Wavelet {
           hw[j] -= alpha * (lw[cL(j - 1)] + lw[cL(j)]);
         }
         for (let j = 0; j < hHgt; j++) {
-          out[(2 * j) * resW + x] = hw[j];
+          out[2 * j * resW + x] = hw[j];
         }
         for (let j = 0; j < lHgt; j++) {
           out[(2 * j + 1) * resW + x] = lw[j];
