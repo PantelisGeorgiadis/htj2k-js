@@ -293,9 +293,9 @@ describe('SizSegment', () => {
   });
 
   it('should throw when component count is out of range', () => {
-    expect(() => new SizSegment(0, makeSizBuffer({ components: 0, precisions: [], ssX: [], ssY: [] })).parse()).to.throw(
-      'Component count out of valid range [0]'
-    );
+    expect(() =>
+      new SizSegment(0, makeSizBuffer({ components: 0, precisions: [], ssX: [], ssY: [] })).parse()
+    ).to.throw('Component count out of valid range [0]');
     expect(() => new SizSegment(0, makeSizBuffer({ components: 20000 })).parse()).to.throw(
       'Component count out of valid range'
     );
@@ -354,9 +354,7 @@ describe('CapSegment', () => {
     // popcount(0x00020000) = 1 → expected length 8, but buffer gives length 6
     const buf = makeBuffer([...uint32BE(0x00020000)]);
     const seg = new CapSegment(0, buf);
-    expect(() => seg.parse()).to.throw(
-      'Capabilities count and length of CAP segment do not agree'
-    );
+    expect(() => seg.parse()).to.throw('Capabilities count and length of CAP segment do not agree');
   });
 
   it('should include binary capabilities in toString()', () => {
@@ -491,19 +489,7 @@ describe('CodSegment', () => {
   it('should parse per-level precinct exponents when precincts are used', () => {
     // codingStyle 0x01 = UsePrecincts, D=1 → expected length 12+1+1=14 → byteLength 12.
     // Fixed part is 10 bytes + (D+1)=2 precinct bytes.
-    const bytes = [
-      0x01,
-      0x00,
-      ...uint16BE(1),
-      0x00,
-      0x01,
-      0x04,
-      0x04,
-      0x00,
-      0x01,
-      0x53,
-      0x42,
-    ];
+    const bytes = [0x01, 0x00, ...uint16BE(1), 0x00, 0x01, 0x04, 0x04, 0x00, 0x01, 0x53, 0x42];
     const seg = new CodSegment(0, makeBuffer(bytes));
     seg.parse();
     expect(seg.usePrecincts()).to.equal(true);
@@ -562,9 +548,7 @@ describe('QcdSegment', () => {
     // style 0: steps = getLength() - 3 must satisfy steps % 3 === 1.
     // byteLength 2 → L=4 → steps=1 → valid; byteLength 3 → L=5 → steps=2 → invalid.
     const buf = makeBuffer([0x00, 0x10, 0x10]);
-    expect(() => new QcdSegment(0, buf).parse()).to.throw(
-      'Invalid length value in QCD segment'
-    );
+    expect(() => new QcdSegment(0, buf).parse()).to.throw('Invalid length value in QCD segment');
   });
 
   it('should expose parsed step sizes for style 0 via getQuantizationStepSize()', () => {
@@ -586,9 +570,7 @@ describe('QcdSegment', () => {
     // style 2: (getLength() - 3) must be even with steps % 3 === 1.
     // byteLength 4 → L=6 → (6-3)=3 is odd → invalid length
     const buf = makeBuffer([0x02, 0x00, 0x10, 0x10]);
-    expect(() => new QcdSegment(0, buf).parse()).to.throw(
-      'Invalid length value in QCD marker'
-    );
+    expect(() => new QcdSegment(0, buf).parse()).to.throw('Invalid length value in QCD marker');
   });
 
   it('should include decomposition levels and style in toString()', () => {
@@ -885,7 +867,10 @@ describe('NltSegment', () => {
 
   it('should parse a LUT (Tnlt=2) with leading Npts', () => {
     // Cnlt=0, BDnlt=8, Tnlt=2, Npts=3, then 3 raw table bytes
-    const seg = new NltSegment(0, makeBuffer([0x00, 0x00, 0x07, 0x02, 0x00, 0x03, 0x11, 0x22, 0x33]));
+    const seg = new NltSegment(
+      0,
+      makeBuffer([0x00, 0x00, 0x07, 0x02, 0x00, 0x03, 0x11, 0x22, 0x33])
+    );
     expect(() => seg.parse()).to.not.throw();
     expect(seg.getType()).to.equal(2);
   });
@@ -895,7 +880,7 @@ describe('NltSegment', () => {
     expect(() => seg.parse()).to.not.throw();
   });
 
-  it('should parse two\'s-complement type (Tnlt=3) without parameters', () => {
+  it("should parse two's-complement type (Tnlt=3) without parameters", () => {
     const seg = new NltSegment(0, makeBuffer([0x00, 0x00, 0x07, 0x03]));
     seg.parse();
     expect(seg.getType()).to.equal(3);

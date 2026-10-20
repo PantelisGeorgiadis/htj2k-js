@@ -131,8 +131,6 @@ class TagTree {
 }
 //#endregion
 
-
 //#region Exports
 module.exports = { TagTree };
 //#endregion
-

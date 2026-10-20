@@ -289,7 +289,7 @@ describe('BlockDecoder', () => {
       const data = makePassData(24, 8, 4);
       const result = bd.decodeCodeblock(data, 0, 10, 2, 24, 8, 4, 4);
       expect(Array.from(result)).to.deep.equal([
-        0, 0, 0, 0, 1572864, 0, 0, 0, 0, 0, 1572864, 0, 0, 0, 0, 0
+        0, 0, 0, 0, 1572864, 0, 0, 0, 0, 0, 1572864, 0, 0, 0, 0, 0,
       ]);
     });
 
@@ -297,7 +297,7 @@ describe('BlockDecoder', () => {
       const data = makePassData(24, 8, 4);
       const result = bd.decodeCodeblock(data, 0, 10, 3, 24, 8, 4, 4);
       expect(Array.from(result)).to.deep.equal([
-        0, 0, 0, 0, 1310720, 0, 0, 0, 0, 0, 1310720, 0, 0, 0, 0, 0
+        0, 0, 0, 0, 1310720, 0, 0, 0, 0, 0, 1310720, 0, 0, 0, 0, 0,
       ]);
     });
 
@@ -339,7 +339,7 @@ describe('BlockDecoder', () => {
 
     it('decodes an 8×8 block exercising multi-run MEL cleanup', () => {
       const words = Array.from(bd.decodeCodeblock(makeMultiRun(8), 0, 10, 1, 16, 8, 8, 8));
-      const nonzero = words.filter(x => x !== 0);
+      const nonzero = words.filter((x) => x !== 0);
       expect(nonzero.length).to.be.greaterThan(0);
       for (const w of nonzero) expect(w).to.equal(0x180000);
     });

@@ -202,7 +202,13 @@ describe('Wavelet', () => {
       const result = wavelet.iDwt2d(
         [
           { width: 2, height: 2, ll: new Float64Array(4).fill(9) },
-          { width: 0, height: 0, hl: new Float64Array(0), lh: new Float64Array(0), hh: new Float64Array(0) },
+          {
+            width: 0,
+            height: 0,
+            hl: new Float64Array(0),
+            lh: new Float64Array(0),
+            hh: new Float64Array(0),
+          },
           {
             width: 4,
             height: 4,
@@ -323,7 +329,17 @@ describe('Wavelet', () => {
 
     it('applies the output stride', () => {
       const out = new Float64Array(6);
-      w._iDwt1dRev53Offset(new Float64Array([3, 4, 0]), 0, new Float64Array([2, 4, 0]), 0, 2, 2, out, 0, 2);
+      w._iDwt1dRev53Offset(
+        new Float64Array([3, 4, 0]),
+        0,
+        new Float64Array([2, 4, 0]),
+        0,
+        2,
+        2,
+        out,
+        0,
+        2
+      );
       expect(Array.from(out)).to.deep.equal([2, 0, 4, 0, 2, 0]);
     });
 
@@ -401,7 +417,15 @@ describe('Wavelet', () => {
 
     it('irreversible: flat reconstruction across one low and one high row', () => {
       const out = new Float64Array(4);
-      w._iDwtVerticalCas1(new Float64Array([10, 10]), new Float64Array([0, 0]), 1, 1, 2, out, false);
+      w._iDwtVerticalCas1(
+        new Float64Array([10, 10]),
+        new Float64Array([0, 0]),
+        1,
+        1,
+        2,
+        out,
+        false
+      );
       expect(arrApproxEqual(out, [10, 10, 10, 10], 1e-6)).to.be.true;
     });
 
@@ -539,7 +563,13 @@ describe('Wavelet', () => {
         2,
         out
       );
-      expect(arrApproxEqual(out.subarray(0, 6), [0.769826, 1.769826, 1.817456, 2.817456, 3.115087, 4.115087], 1e-5)).to.be.true;
+      expect(
+        arrApproxEqual(
+          out.subarray(0, 6),
+          [0.769826, 1.769826, 1.817456, 2.817456, 3.115087, 4.115087],
+          1e-5
+        )
+      ).to.be.true;
     });
   });
 
