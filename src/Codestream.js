@@ -4,6 +4,7 @@ const {
   ComSegment,
   NltSegment,
   PpmSegment,
+  QccSegment,
   QcdSegment,
   Segment,
   SizSegment,
@@ -58,7 +59,8 @@ class Codestream {
    * @returns {number} header.bitDepth bitDepth.
    * @returns {boolean} header.signed signed.
    * @returns {number} header.components components.
-   * @returns {boolean} header.decompositionLevels decompositionLevels.
+   * @returns {boolean} header.reversible reversible.
+   * @returns {number} header.decompositionLevels decompositionLevels.
    * @returns {string} header.progressionOrder progressionOrder.
    * @throws Error if codestream ends before finding a tile segment and
    * SIZ, COD and QCD segments are not found.
@@ -97,6 +99,9 @@ class Codestream {
         segment.parse();
       } else if (marker === Marker.Qcd) {
         segment = new QcdSegment(position, data);
+        segment.parse();
+      } else if (marker === Marker.Qcc) {
+        segment = new QccSegment(position, data);
         segment.parse();
       } else if (marker === Marker.Tlm) {
         segment = new TlmSegment(position, data);
@@ -218,6 +223,8 @@ class Codestream {
         // Read segments inside tile part
         let sodFound = false;
         let sodPosition = -1;
+        let tileQcd = undefined;
+        const tileQccs = [];
         for (;;) {
           const { position, marker, data } = this._readNextSegment();
           if (position === -1 && marker === -1) {
@@ -236,7 +243,19 @@ class Codestream {
             break;
           }
 
-          const segment = new Segment(marker, position, data);
+          // Per-tile quantization segments override the main header values
+          let segment;
+          if (marker === Marker.Qcd) {
+            segment = new QcdSegment(position, data);
+            segment.parse();
+            tileQcd = segment;
+          } else if (marker === Marker.Qcc) {
+            segment = new QccSegment(position, data);
+            segment.parse();
+            tileQccs.push(segment);
+          } else {
+            segment = new Segment(marker, position, data);
+          }
           this._addSegment(segment);
         }
 
@@ -251,7 +270,11 @@ class Codestream {
         if (!tile) {
           throw new Error(`Couldn't find tile with index ${sotSegment.getTileIndex()}`);
         }
-        tile.addTilePart(new TilePart(sotSegment, sodPosition));
+        const tilePart = new TilePart(sotSegment, sodPosition);
+        // Per-tile quantization overrides are picked up during decoding
+        tilePart.qcd = tileQcd;
+        tilePart.qccs = tileQccs;
+        tile.addTilePart(tilePart);
 
         // Jump to next tile part
         const tileEndPosition = tileStartPosition + sotSegment.getPayloadLength();
@@ -263,6 +286,36 @@ class Codestream {
   }
 
   //#region Private Methods
+  /**
+   * Builds the effective QCD-equivalent quantization for one component of a
+   * tile. Tile-part QCD/QCC segments override the main header values for the
+   * tile (ISO/IEC 15444-1 B.10, non-PSQCD mode).
+   * @method
+   * @private
+   * @param {QcdSegment|undefined} tileQcd - Tile-part QCD segment, if any.
+   * @param {Array<QccSegment>} tileQccs - Tile-part QCC segments, if any.
+   * @param {number} component - Component index.
+   * @param {Object} mainComponentQcd - Main-header effective QCD for the
+   * component (main QCD, or main QCC if present).
+   * @returns {Object} The effective quantization segment for the component.
+   */
+  _resolveQcdForComponent(tileQcd, tileQccs, component, mainComponentQcd) {
+    if (!tileQcd) {
+      for (const qcc of tileQccs || []) {
+        if (qcc.getComponent() === component) {
+          return qcc;
+        }
+      }
+      return mainComponentQcd;
+    }
+    for (const qcc of tileQccs || []) {
+      if (qcc.getComponent() === component) {
+        return qcc;
+      }
+    }
+    return tileQcd;
+  }
+
   /**
    * Finds the NLT segment that applies to a given component, if any.
    * Per-component NLTs take precedence over global (Cnlt = 0xFFFF) NLTs.
@@ -343,6 +396,8 @@ class Codestream {
     const isColorTransform = cod.isEmployingColorTransform();
 
     const buffer = new Uint8Array(this.binaryReader.buffer);
+    // Referenced by _assembleBand when concatenating codeblock data chunks.
+    this._codestreamBytes = buffer;
 
     if (!this.tiles || this.tiles.length === 0) {
       throw new Error('No tiles found in codestream');
@@ -367,13 +422,107 @@ class Codestream {
     const ppmActive = ppmBuffer.byteLength > 0;
     let ppmCursor = 0;
 
+    // Per-component main-header effective QCD (QCC overrides QCD per spec B.10).
+    // Tile-part QCD/QCC segments override these during the tile loop below.
+    const mainQcds = [];
+    for (let c = 0; c < numComponents; c++) {
+      let compQcd = qcd;
+      for (const s of this.segments) {
+        if (s.getMarker() === Marker.Qcc && s.getComponent && s.getComponent() === c) {
+          compQcd = s;
+          break;
+        }
+      }
+      mainQcds.push(compQcd);
+    }
+
+    const codInfo = {
+      useSop: cod.useSopMarker(),
+      useEph: cod.useEphMarker(),
+      codeblockStyle: cod.getCodeblockStyle(),
+    };
+
     for (const tile of this.tiles) {
+      // Effective quantization per component: main-header QCC overrides the
+      // main QCD; tile-part QCD/QCC segments override both for this tile.
+      const effectiveQcds = mainQcds.slice();
+
+      // Persistent packet-header state (tag-trees, segments) is per tile.
+      this.packetReader.resetState();
+
+      // Mb (nominal dynamic range minus guard bands) per quantization band,
+      // per OpenJPEG: numbps = expn + numgbits - 1 (tcd.c).
+      const bandNumbpsPerComp = [];
+      const buildBandNumbps = (qcdSeg) => {
+        const guardBits = qcdSeg.quantizationStyle >> 5;
+        const noQuant = (qcdSeg.quantizationStyle & 0x1f) === 0;
+        return qcdSeg.quantizationStepSize.map((s) => (noQuant ? s >> 3 : s >> 11) + guardBits - 1);
+      };
+
+      // Position-anchored progressions (RPCL/PCRL/CPRL) require per
+      // (component, resolution) cursors that walk each resolution's own
+      // precinct grid in raster order and persist across tile-parts, exactly
+      // like OpenJPH's cur_precinct_loc. At each step the next packet
+      // position is the head precinct with the smallest projected
+      // full-resolution (y, x) top-left, ties broken by scan order
+      // (component, then resolution).
+      const progCursors = tile.tileComponents.map((tc) =>
+        tc.resolutions.map(() => ({ x: 0, y: 0 }))
+      );
+      const progTileX0 = tile.getTileRectangle().getPoint().getX();
+      const progTileY0 = tile.getTileRectangle().getPoint().getY();
+      const peekProgPrecinct = (c, r) => {
+        const tc = tile.tileComponents[c];
+        const resolution = tc.resolutions[r];
+        if (!resolution) {
+          return null;
+        }
+        const pp = resolution.getPrecinctParameters();
+        const cur = progCursors[c][r];
+        const idx = cur.y * pp.numPrecinctsWide + cur.x;
+        if (pp.numPrecincts === 0 || idx >= pp.numPrecincts) {
+          return null;
+        }
+        const decomp = tc.getCodingStyleParameters().getDecompositionLevels();
+        const scale = 1 << (decomp - r);
+        const ppx0 = (pp.precinctX0 + cur.x) * pp.precinctWidth;
+        const ppy0 = (pp.precinctY0 + cur.y) * pp.precinctHeight;
+        return {
+          x: Math.max(progTileX0, ppx0 * scale * tc.getSubSamplingX()),
+          y: Math.max(progTileY0, ppy0 * scale * tc.getSubSamplingY()),
+          idx,
+        };
+      };
+
       // Read packets according to progression order
       for (const tilePart of tile.tileParts) {
+        if (tilePart.qcd) {
+          for (let c = 0; c < numComponents; c++) {
+            effectiveQcds[c] = this._resolveQcdForComponent(
+              tilePart.qcd,
+              tilePart.qccs,
+              c,
+              mainQcds[c]
+            );
+          }
+        } else if (tilePart.qccs && tilePart.qccs.length) {
+          for (const qcc of tilePart.qccs) {
+            if (qcc.getComponent() < numComponents) {
+              effectiveQcds[qcc.getComponent()] = qcc;
+            }
+          }
+        }
+
         const dataStart = tilePart.sodPosition + 2; // SOD marker is 2 bytes
         const dataEnd = tilePart.sotSegment.getPosition() + tilePart.sotSegment.getTilePartLength();
         let pos = dataStart;
         const progressionOrder = cod.getProgressionOrder();
+
+        // Refresh Mb tables for this tile-part's effective quantization.
+        bandNumbpsPerComp.length = 0;
+        for (let c = 0; c < numComponents; c++) {
+          bandNumbpsPerComp.push(buildBandNumbps(effectiveQcds[c]));
+        }
 
         // If PPM is in use, peel off the next [Nppm, Ippm] group for this tile-part
         // and install it as the packet-header source.
@@ -410,7 +559,18 @@ class Codestream {
                   if (this.packetReader.isExhausted(pos, dataEnd)) {
                     break;
                   }
-                  pos = this.packetReader.readPacket(buffer, pos, dataEnd, l, resolution, p, cod);
+                  pos = this.packetReader.readPacket(
+                    buffer,
+                    pos,
+                    dataEnd,
+                    l,
+                    c,
+                    r,
+                    resolution,
+                    p,
+                    bandNumbpsPerComp[c],
+                    codInfo
+                  );
                 }
               }
             }
@@ -426,7 +586,18 @@ class Codestream {
                   if (this.packetReader.isExhausted(pos, dataEnd)) {
                     break;
                   }
-                  pos = this.packetReader.readPacket(buffer, pos, dataEnd, l, resolution, p, cod);
+                  pos = this.packetReader.readPacket(
+                    buffer,
+                    pos,
+                    dataEnd,
+                    l,
+                    c,
+                    r,
+                    resolution,
+                    p,
+                    bandNumbpsPerComp[c],
+                    codInfo
+                  );
                 }
               }
             }
@@ -434,89 +605,143 @@ class Codestream {
         } else if (progressionOrder === ProgressionOrder.Rpcl) {
           // Resolution-Position-Component-Layer
           for (let r = 0; r <= decompositionLevels; r++) {
-            let maxH = 0;
-            let maxW = 0;
-            for (let c = 0; c < numComponents; c++) {
-              const pp = tile.tileComponents[c].resolutions[r].getPrecinctParameters();
-              maxH = Math.max(maxH, pp.numPrecinctsHigh);
-              maxW = Math.max(maxW, pp.numPrecinctsWide);
-            }
-            for (let py = 0; py < maxH; py++) {
-              for (let px = 0; px < maxW; px++) {
-                for (let c = 0; c < numComponents; c++) {
-                  const resolution = tile.tileComponents[c].resolutions[r];
-                  const pp = resolution.getPrecinctParameters();
-                  const p = py * pp.numPrecinctsWide + px;
-                  if (p >= pp.numPrecincts) {
-                    continue;
-                  }
-                  for (let l = 0; l < qualityLayers; l++) {
-                    if (this.packetReader.isExhausted(pos, dataEnd)) {
-                      break;
-                    }
-                    pos = this.packetReader.readPacket(buffer, pos, dataEnd, l, resolution, p, cod);
-                  }
+            for (;;) {
+              let best = null;
+              let bestC = -1;
+              for (let c = 0; c < numComponents; c++) {
+                const cand = peekProgPrecinct(c, r);
+                if (!cand) {
+                  continue;
                 }
+                if (!best || cand.y < best.y || (cand.y === best.y && cand.x < best.x)) {
+                  best = cand;
+                  bestC = c;
+                }
+              }
+              if (!best) {
+                break;
+              }
+              const resolution = tile.tileComponents[bestC].resolutions[r];
+              const pp = resolution.getPrecinctParameters();
+              const cur = progCursors[bestC][r];
+              for (let l = 0; l < qualityLayers; l++) {
+                if (this.packetReader.isExhausted(pos, dataEnd)) {
+                  break;
+                }
+                pos = this.packetReader.readPacket(
+                  buffer,
+                  pos,
+                  dataEnd,
+                  l,
+                  bestC,
+                  r,
+                  resolution,
+                  best.idx,
+                  bandNumbpsPerComp[bestC],
+                  codInfo
+                );
+              }
+              if (++cur.x >= pp.numPrecinctsWide) {
+                cur.x = 0;
+                cur.y++;
               }
             }
           }
         } else if (progressionOrder === ProgressionOrder.Pcrl) {
           // Position-Component-Resolution-Layer
-          let maxH = 0;
-          let maxW = 0;
-          for (let c = 0; c < numComponents; c++) {
-            for (let r = 0; r <= decompositionLevels; r++) {
-              const pp = tile.tileComponents[c].resolutions[r].getPrecinctParameters();
-              maxH = Math.max(maxH, pp.numPrecinctsHigh);
-              maxW = Math.max(maxW, pp.numPrecinctsWide);
-            }
-          }
-          for (let py = 0; py < maxH; py++) {
-            for (let px = 0; px < maxW; px++) {
-              for (let c = 0; c < numComponents; c++) {
-                for (let r = 0; r <= decompositionLevels; r++) {
-                  const resolution = tile.tileComponents[c].resolutions[r];
-                  const pp = resolution.getPrecinctParameters();
-                  const p = py * pp.numPrecinctsWide + px;
-                  if (p >= pp.numPrecincts) {
-                    continue;
-                  }
-                  for (let l = 0; l < qualityLayers; l++) {
-                    if (this.packetReader.isExhausted(pos, dataEnd)) {
-                      break;
-                    }
-                    pos = this.packetReader.readPacket(buffer, pos, dataEnd, l, resolution, p, cod);
-                  }
+          for (;;) {
+            let best = null;
+            let bestC = -1;
+            let bestR = -1;
+            for (let c = 0; c < numComponents; c++) {
+              for (let r = 0; r <= decompositionLevels; r++) {
+                const cand = peekProgPrecinct(c, r);
+                if (!cand) {
+                  continue;
+                }
+                if (
+                  !best ||
+                  cand.y < best.y ||
+                  (cand.y === best.y && cand.x < best.x) ||
+                  (cand.y === best.y && cand.x === best.x && c < bestC) ||
+                  (cand.y === best.y && cand.x === best.x && c === bestC && r < bestR)
+                ) {
+                  best = cand;
+                  bestC = c;
+                  bestR = r;
                 }
               }
+            }
+            if (!best) {
+              break;
+            }
+            const resolution = tile.tileComponents[bestC].resolutions[bestR];
+            const pp = resolution.getPrecinctParameters();
+            const cur = progCursors[bestC][bestR];
+            for (let l = 0; l < qualityLayers; l++) {
+              if (this.packetReader.isExhausted(pos, dataEnd)) {
+                break;
+              }
+              pos = this.packetReader.readPacket(
+                buffer,
+                pos,
+                dataEnd,
+                l,
+                bestC,
+                bestR,
+                resolution,
+                best.idx,
+                bandNumbpsPerComp[bestC],
+                codInfo
+              );
+            }
+            if (++cur.x >= pp.numPrecinctsWide) {
+              cur.x = 0;
+              cur.y++;
             }
           }
         } else if (progressionOrder === ProgressionOrder.Cprl) {
           // Component-Position-Resolution-Layer
           for (let c = 0; c < numComponents; c++) {
-            let maxH = 0;
-            let maxW = 0;
-            for (let r = 0; r <= decompositionLevels; r++) {
-              const pp = tile.tileComponents[c].resolutions[r].getPrecinctParameters();
-              maxH = Math.max(maxH, pp.numPrecinctsHigh);
-              maxW = Math.max(maxW, pp.numPrecinctsWide);
-            }
-            for (let py = 0; py < maxH; py++) {
-              for (let px = 0; px < maxW; px++) {
-                for (let r = 0; r <= decompositionLevels; r++) {
-                  const resolution = tile.tileComponents[c].resolutions[r];
-                  const pp = resolution.getPrecinctParameters();
-                  const p = py * pp.numPrecinctsWide + px;
-                  if (p >= pp.numPrecincts) {
-                    continue;
-                  }
-                  for (let l = 0; l < qualityLayers; l++) {
-                    if (this.packetReader.isExhausted(pos, dataEnd)) {
-                      break;
-                    }
-                    pos = this.packetReader.readPacket(buffer, pos, dataEnd, l, resolution, p, cod);
-                  }
+            for (;;) {
+              let best = null;
+              let bestR = -1;
+              for (let r = 0; r <= decompositionLevels; r++) {
+                const cand = peekProgPrecinct(c, r);
+                if (!cand) {
+                  continue;
                 }
+                if (!best || cand.y < best.y || (cand.y === best.y && cand.x < best.x)) {
+                  best = cand;
+                  bestR = r;
+                }
+              }
+              if (!best) {
+                break;
+              }
+              const resolution = tile.tileComponents[c].resolutions[bestR];
+              const pp = resolution.getPrecinctParameters();
+              const cur = progCursors[c][bestR];
+              for (let l = 0; l < qualityLayers; l++) {
+                if (this.packetReader.isExhausted(pos, dataEnd)) {
+                  break;
+                }
+                pos = this.packetReader.readPacket(
+                  buffer,
+                  pos,
+                  dataEnd,
+                  l,
+                  c,
+                  bestR,
+                  resolution,
+                  best.idx,
+                  bandNumbpsPerComp[c],
+                  codInfo
+                );
+              }
+              if (++cur.x >= pp.numPrecinctsWide) {
+                cur.x = 0;
+                cur.y++;
               }
             }
           }
@@ -529,7 +754,10 @@ class Codestream {
       for (let c = 0; c < numComponents; c++) {
         const tc = tile.tileComponents[c];
         const bitDepth = tc.getBitDepth();
-        //const guardBits = qcd.quantizationStyle >> 5;
+        const compQcd = effectiveQcds[c];
+        //guardBits = compQcd.quantizationStyle >> 5;
+        // Codeblock style bit 0x08 = vertically stripe-causal context (VSC).
+        const stripeCausal = (tc.getCodingStyleParameters().getCodeblockStyle() & 0x08) !== 0;
 
         // Build resolutions array for idwt2d
         // resolutions[0] holds LL; resolutions[r>0] holds HL/LH/HH
@@ -544,8 +772,19 @@ class Codestream {
           const llW = llBand.subBandRect.getSize().getWidth() - llSx0;
           const llH = llBand.subBandRect.getSize().getHeight() - llSy0;
           const llBuf = new Float64Array(Math.max(llW * llH, 0));
-          this._assembleBand(llBand, llBuf, llW, llSx0, llSy0, qcd, 0, isReversible, bitDepth);
-          resolutionsForIDWT.push({ width: llW, height: llH, ll: llBuf });
+          this._assembleBand(
+            llBand,
+            llBuf,
+            llW,
+            llSx0,
+            llSy0,
+            compQcd,
+            0,
+            isReversible,
+            bitDepth,
+            stripeCausal
+          );
+          resolutionsForIDWT.push({ width: llW, height: llH, ll: llBuf, x0: llSx0, y0: llSy0 });
         }
 
         // Higher resolutions (HL / LH / HH subbands)
@@ -591,10 +830,11 @@ class Codestream {
             hlW,
             hlSx0,
             hlSy0,
-            qcd,
+            compQcd,
             bandIdxHl,
             isReversible,
-            bitDepth
+            bitDepth,
+            stripeCausal
           );
           this._assembleBand(
             lhBand,
@@ -602,10 +842,11 @@ class Codestream {
             lhW,
             lhSx0,
             lhSy0,
-            qcd,
+            compQcd,
             bandIdxLh,
             isReversible,
-            bitDepth
+            bitDepth,
+            stripeCausal
           );
           this._assembleBand(
             hhBand,
@@ -613,13 +854,26 @@ class Codestream {
             hhW,
             hhSx0,
             hhSy0,
-            qcd,
+            compQcd,
             bandIdxHh,
             isReversible,
-            bitDepth
+            bitDepth,
+            stripeCausal
           );
 
-          resolutionsForIDWT.push({ width: resW, height: resH, hl: hlBuf, lh: lhBuf, hh: hhBuf });
+          resolutionsForIDWT.push({
+            width: resW,
+            height: resH,
+            hl: hlBuf,
+            lh: lhBuf,
+            hh: hhBuf,
+            x0: res.getResolutionRectangle().getPoint().getX(),
+            y0: res.getResolutionRectangle().getPoint().getY(),
+            hlW: hlW,
+            hlH: hlH,
+            lhW: lhW,
+            lhH: lhH,
+          });
         }
 
         // Run IDWT
@@ -686,12 +940,21 @@ class Codestream {
         const tcW = tile.tileComponents[c].getWidth();
         const tcH = tile.tileComponents[c].getHeight();
         const imgW = siz.getWidth(c);
+        const imgH = siz.getHeight(c);
         const imgComp = imageComps[c];
 
-        for (let row = 0; row < tcH; row++) {
+        // Tiles routinely extend beyond the image area (the nominal grid is
+        // not aligned with x0siz/y0siz). Clip the copy rectangle to the
+        // image: an unclamped negative dstX0/dstY0 would wrap into the
+        // previous line and corrupt unrelated pixels.
+        const row0 = Math.max(0, -dstY0);
+        const row1 = Math.min(tcH, imgH - dstY0);
+        const col0 = Math.max(0, -dstX0);
+        const col1 = Math.min(tcW, imgW - dstX0);
+        for (let row = row0; row < row1; row++) {
           const srcOff = row * tcW;
           const dstOff = (dstY0 + row) * imgW + dstX0;
-          for (let col = 0; col < tcW; col++) {
+          for (let col = col0; col < col1; col++) {
             let v = Math.round(pixels[srcOff + col]) + shift;
             if (v < minVal) {
               v = minVal;
@@ -728,28 +991,46 @@ class Codestream {
    * @param {number} bandIdx - Quantization step-size index for this subband.
    * @param {boolean} isReversible - True for 5/3 reversible wavelet.
    * @param {number} bitDepth - Bit depth of the component.
+   * @param {boolean} [stripeCausal] - Vertically stripe-causal context (codeblock style bit 0x08).
    * @private
    */
-  _assembleBand(sb, buf, sbW, sx0, sy0, qcd, bandIdx, isReversible, bitDepth) {
-    // Quantization step size (irreversible only).
-    let delta = 1.0;
+  _assembleBand(
+    sb,
+    buf,
+    sbW,
+    sx0,
+    sy0,
+    qcd,
+    bandIdx,
+    isReversible,
+    bitDepth,
+    stripeCausal = false
+  ) {
+    // Step size Delta_b for this subband (Rec. T.800 Equation E-3). The
+    // decoder-irreversible path uses log2-gain = 0 for every subband (the
+    // subband gains are folded into the 9/7 synthesis filter normalization
+    // instead, cf. OpenJPEG two_invK), so Rb is the component precision.
+    let stepSize = 1.0;
+    let mantissaOk = false;
     if (!isReversible && bandIdx < qcd.quantizationStepSize.length) {
       const s = qcd.quantizationStepSize[bandIdx];
-      const mant = s & 0x7ff;
-      const guardBits = qcd.quantizationStyle >> 5;
-      // Subband type: 0=LL, 1=HL, 2=LH, 3=HH
-      // Precompute subband type to avoid modulo in loop
-      const sbType = bandIdx === 0 ? 0 : bandIdx % 3 === 0 ? 3 : bandIdx % 3;
-      const sbTypeScale = [1, 2, 2, 4][sbType];
-      delta = (1 + mant / 2048) * sbTypeScale * Math.pow(2, guardBits + (bitDepth || 8) - 32);
+      const twoByte = (qcd.quantizationStyle & 0x1f) === 2;
+      const expn = twoByte ? s >> 11 : s >> 5;
+      const mant = twoByte ? s & 0x7ff : (s & 0x1f) << 3;
+      stepSize = (1 + mant / 2048) * Math.pow(2, (bitDepth || 8) - expn);
+      mantissaOk = true;
     }
 
     const codeblocks = sb.codeblocks;
     const cbCount = codeblocks.length;
 
+    // Concatenation scratch buffer, reused across multi-chunk codeblocks.
+    let concatBuf = null;
+
     for (let cbIdx = 0; cbIdx < cbCount; cbIdx++) {
       const cb = codeblocks[cbIdx];
-      if (!cb.data || cb.passes === 0 || cb.lengths1 < 2) {
+      const st = cb._pkt;
+      if (!st || st.corrupted || st.numchunks === 0 || st.numsegs === 0) {
         continue;
       }
 
@@ -759,21 +1040,97 @@ class Codestream {
         continue;
       }
 
-      const p = 30 - cb.missingMSBs;
+      const Mb = st.Mb;
+      if (Mb === 0 || Mb > 30) {
+        continue;
+      }
+      // zero_bplanes = (Mb + 1) - numbps (ht_dec.c). numbps > Mb + 1 means an
+      // inconsistent (corrupted) zero-bitplane tree value; skip the codeblock.
+      if (st.numbps > Mb + 1) {
+        continue;
+      }
+      const zeroBplanes = Mb + 1 - st.numbps;
+      if (zeroBplanes > Mb) {
+        continue;
+      }
+
+      // Gather (possibly chunked) codeblock data, mirroring ht_dec.c.
+      const chunks = st.chunks;
+      const numchunks = st.numchunks;
+      let cblkLen = 0;
+      for (let i = 0; i < numchunks; i++) {
+        cblkLen += chunks[i * 2 + 1];
+      }
+      let codedData;
+      let dataOff = 0;
+      if (numchunks === 1) {
+        // Pass an exact byte view of the chunk with offset 0: BlockDecoder's
+        // bit-reader alignment arithmetic assumes the codeblock data starts at
+        // index 0 of the array it is given.
+        codedData = this._codestreamBytes.subarray(chunks[0], chunks[0] + cblkLen);
+      } else {
+        if (concatBuf === null || concatBuf.length < cblkLen) {
+          concatBuf = new Uint8Array(cblkLen);
+        }
+        let off = 0;
+        for (let i = 0; i < numchunks; i++) {
+          const pos = chunks[i * 2];
+          const len = chunks[i * 2 + 1];
+          concatBuf.set(this._codestreamBytes.subarray(pos, pos + len), off);
+          off += len;
+        }
+        codedData = concatBuf;
+      }
+
+      // Per-segment accumulated state (opj_openjp2 ht_dec.c):
+      // passes = segs[0].realNumPasses + segs[1].realNumPasses.
+      let passes = st.segs[0].realNumPasses;
+      passes += st.numsegs > 1 ? st.segs[1].realNumPasses : 0;
+      let lengths1 = passes > 0 ? st.segs[0].len : 0;
+      // OpenJPEG's segs array is zero-initialised: an uninitialised segs[1]
+      // reads as { len: 0, real_num_passes: 0 }. Mirror that here.
+      const lengths2 = passes > 1 && st.numsegs > 1 ? st.segs[1].len : 0;
+      if (passes > 1 && lengths2 === 0) {
+        passes = 1;
+      }
+      if (zeroBplanes === Mb && passes > 1) {
+        passes = 1;
+      }
+      // OpenJPEG's ht_dec hard-fails when the accumulated pass count exceeds
+      // three, but multi-layer HT streams legitimately carry many
+      // refinement passes per segment: the HT entropy streams are
+      // bitplane-driven, so the pass type saturates at CUP+SPP+MRP while the
+      // full lengths1/lengths2 byte ranges still carry every accumulated pass.
+      // Clamp instead of rejecting (matches BlockDecoder's own clamping).
+      if (passes > 3) {
+        passes = 3;
+      }
+      if (lengths1 < 2 || lengths1 > cblkLen || lengths1 + lengths2 > cblkLen) {
+        continue;
+      }
+
+      // BlockDecoder follows the OpenJPH convention where missingMSBs
+      // counts the all-zero planes strictly ABOVE the first significant
+      // bitplane, i.e. openjpeg_zero_bplanes - 1 (block decoders typically
+      // pass missing_msbs = mb - numbps - 1 with their own numbps offset).
+      // The OpenJPEG-style guards above still use the standard count.
+      const missingMSBs = zeroBplanes > 0 ? zeroBplanes - 1 : 0;
+      const p = 30 - missingMSBs;
       if (p < 0) {
         continue;
       }
 
       // Decode codeblock and get array of quantized coefficients
       const coeffs = this.blockDecoder.decodeCodeblock(
-        cb.data,
-        0,
-        cb.missingMSBs,
-        cb.passes,
-        cb.lengths1,
-        cb.lengths2 || 0,
+        codedData,
+        dataOff,
+        missingMSBs,
+        passes,
+        lengths1,
+        lengths2,
         cbW,
-        cbH
+        cbH,
+        stripeCausal
       );
       if (!coeffs) {
         continue;
@@ -801,7 +1158,18 @@ class Codestream {
         }
       } else {
         // Irreversible path - floating point with quantization.
+        //
+        // BlockDecoder returns magnitudes normalized to bit 30, i.e. the
+        // decoded int32 codeblock values left-shifted by (30 - (Mb -
+        // zeroBplanes) + 1) = 31 - zeroBplanes - numbps. We replicate
+        // OpenJPEG's gain-free de-quintization exactly: the decoded int32
+        // is multiplied by 0.5 * stepsize, where stepsize omits the subband
+        // gain (log2_gain is forced to 0 by BUG_WEIRD_TWO_INVK in tcd.c).
+        // The subband gains are instead applied inside the inverse DWT by
+        // OpenJPEG's use of two_invK = 2 * invK on the high bands, which
+        // the 9/7 synthesis in Wavelet.js mirrors.
         const mask = 0x7fffffff;
+        const scale = mantissaOk ? 0.5 * stepSize * Math.pow(2, st.numbps + zeroBplanes - 31) : 1.0;
         for (let j = 0; j < cbH; j++) {
           const srcOff = j * cbW;
           const dstOff = dstBase + j * sbW;
@@ -809,7 +1177,7 @@ class Codestream {
             const val = coeffs[srcOff + i];
             if (val !== 0) {
               const mag = val & mask;
-              buf[dstOff + i] = (val >>> 31 ? -mag : mag) * delta;
+              buf[dstOff + i] = val >>> 31 ? -mag * scale : mag * scale;
             }
           }
         }
@@ -837,7 +1205,7 @@ class Codestream {
    * @returns {Object} segment Read next segment result object.
    * @returns {number} segment.position position.
    * @returns {Marker} segment.marker marker.
-   * @returns {number} segment.size size.
+   * @returns {number} segment.length length.
    * @returns {ArrayBuffer} segment.data data.
    */
   _readNextSegment() {
@@ -946,5 +1314,6 @@ class Codestream {
 //#endregion
 
 //#region Exports
+// Temporary debug export removed
 module.exports = Codestream;
 //#endregion

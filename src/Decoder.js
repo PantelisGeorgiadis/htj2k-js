@@ -28,7 +28,8 @@ class Decoder {
    * @returns {number} header.bitDepth bitDepth.
    * @returns {boolean} header.signed signed.
    * @returns {number} header.components components.
-   * @returns {boolean} header.decompositionLevels decompositionLevels.
+   * @returns {boolean} header.reversible reversible.
+   * @returns {number} header.decompositionLevels decompositionLevels.
    * @returns {string} header.progressionOrder progressionOrder.
    * @throws Error if buffer does not contain an HTJ2K codestream.
    */
@@ -113,6 +114,10 @@ class Decoder {
     const comp1 = numComponents > 1 ? components[1] : null;
     const comp2 = numComponents > 2 ? components[2] : null;
 
+    // Pre-fill the alpha channel once (fast typed-array fill) instead of
+    // writing rgba[j+3] per pixel.
+    rgba.fill(255, 3, pixelCount * 4, 4);
+
     if (numComponents === 1) {
       // Grayscale - optimized path
       for (let i = 0, j = 0; i < pixelCount; i++, j += 4) {
@@ -120,7 +125,6 @@ class Decoder {
         rgba[j] = gray;
         rgba[j + 1] = gray;
         rgba[j + 2] = gray;
-        rgba[j + 3] = 255;
       }
     } else if (numComponents === 3) {
       // RGB without alpha - optimized path
@@ -128,7 +132,6 @@ class Decoder {
         rgba[j] = clamp(comp0[i]);
         rgba[j + 1] = clamp(comp1[i]);
         rgba[j + 2] = clamp(comp2[i]);
-        rgba[j + 3] = 255;
       }
     } else {
       throw new Error(`Unsupported number of components for RGBA rendering: ${numComponents}`);
@@ -148,6 +151,7 @@ class Decoder {
    * Determines whether the data is a raw codestream or a file (boxed codestream).
    * @method
    * @private
+   * @param {ArrayBuffer} buffer - Data buffer.
    * @returns {J2kFormat} The determined format type.
    */
   _determineJ2kFormat(buffer) {

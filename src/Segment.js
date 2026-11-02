@@ -121,7 +121,7 @@ class SizSegment extends Segment {
   /**
    * Gets the profile.
    * @method
-   * @returns {string} The profile.
+   * @returns {number} The profile.
    */
   getProfile() {
     return this.profile;
@@ -422,6 +422,7 @@ class CapSegment extends Segment {
    * Counts the numbers of set bits in an integer.
    * @method
    * @private
+   * @param {number} val - Integer to count set bits of.
    * @returns {number} The numbers of set bits in an integer.
    */
   _populationCount(val) {
@@ -717,7 +718,7 @@ class QcdSegment extends Segment {
    * @returns {Array<number>} The quantization step size.
    */
   getQuantizationStepSize() {
-    return this.quantizationStyle;
+    return this.quantizationStepSize;
   }
 
   /**
@@ -729,22 +730,26 @@ class QcdSegment extends Segment {
 
     this.quantizationStyle = binaryReader.readUint8();
     if ((this.quantizationStyle & 0x1f) === 0) {
-      this.decompositionLevels = (this.getLength() - 4) / 3;
-      if (this.getLength() !== 4 + 3 * this.decompositionLevels) {
+      // Body (length - 2 bytes) is Sq followed by 1 + 3 * D single-byte steps
+      const steps = this.getLength() - 3;
+      if (steps < 1 || steps % 3 !== 1) {
         throw new Error('Invalid length value in QCD segment');
       }
-      for (let i = 0; i < 1 + 3 * this.decompositionLevels; ++i) {
+      this.decompositionLevels = (steps - 1) / 3;
+      for (let i = 0; i < steps; ++i) {
         this.quantizationStepSize.push(binaryReader.readUint8());
       }
     } else if ((this.quantizationStyle & 0x1f) === 1) {
       this.decompositionLevels = 0;
       throw new Error('Scalar derived quantization is not supported yet in QCD segment');
     } else if ((this.quantizationStyle & 0x1f) === 2) {
-      this.decompositionLevels = (this.getLength() - 5) / 6;
-      if (this.getLength() != 5 + 6 * this.decompositionLevels) {
+      // Body is Sq followed by 1 + 3 * D two-byte steps
+      const steps = (this.getLength() - 3) / 2;
+      if ((this.getLength() - 3) % 2 !== 0 || steps < 1 || steps % 3 !== 1) {
         throw new Error('Invalid length value in QCD marker');
       }
-      for (let i = 0; i < 1 + 3 * this.decompositionLevels; ++i) {
+      this.decompositionLevels = (steps - 1) / 3;
+      for (let i = 0; i < steps; ++i) {
         this.quantizationStepSize.push(binaryReader.readUint16());
       }
     } else {
@@ -761,6 +766,107 @@ class QcdSegment extends Segment {
     return `${super.toString()} [Decomposition levels: ${this.getDecompositionLevels()}, Quantization style: 0x${this.getQuantizationStyle().toString(
       16
     )}]`;
+  }
+}
+//#endregion
+
+//#region QccSegment
+class QccSegment extends Segment {
+  /**
+   * Creates an instance of QccSegment.
+   * @constructor
+   * @param {number} position - Segment position in codestream.
+   * @param {ArrayBuffer} buffer - Segment buffer.
+   */
+  constructor(position, buffer) {
+    super(Marker.Qcc, position, buffer);
+
+    this.component = 0;
+    this.decompositionLevels = 0;
+    this.quantizationStyle = 0;
+    this.quantizationStepSize = [];
+  }
+
+  /**
+   * Gets the component index this segment applies to.
+   * @method
+   * @returns {number} The component index.
+   */
+  getComponent() {
+    return this.component;
+  }
+
+  /**
+   * Gets decomposition levels.
+   * @method
+   * @returns {number} The decomposition levels.
+   */
+  getDecompositionLevels() {
+    return this.decompositionLevels;
+  }
+
+  /**
+   * Gets quantization style.
+   * @method
+   * @returns {number} The quantization style.
+   */
+  getQuantizationStyle() {
+    return this.quantizationStyle;
+  }
+
+  /**
+   * Gets quantization step size.
+   * @method
+   * @returns {Array<number>} The quantization step size.
+   */
+  getQuantizationStepSize() {
+    return this.quantizationStepSize;
+  }
+
+  /**
+   * Parses the segment.
+   * @method
+   */
+  parse() {
+    const binaryReader = new BinaryReader(this.getBuffer(), false);
+
+    this.component = binaryReader.readUint8();
+    this.quantizationStyle = binaryReader.readUint8();
+    if ((this.quantizationStyle & 0x1f) === 0) {
+      // Body (length - 2) is Rscc, Sq, then 1 + 3 * D single-byte steps
+      const steps = this.getLength() - 4;
+      if (steps < 1 || steps % 3 !== 1) {
+        throw new Error('Invalid length value in QCC segment');
+      }
+      this.decompositionLevels = (steps - 1) / 3;
+      for (let i = 0; i < steps; ++i) {
+        this.quantizationStepSize.push(binaryReader.readUint8());
+      }
+    } else if ((this.quantizationStyle & 0x1f) === 1) {
+      this.decompositionLevels = 0;
+      throw new Error('Scalar derived quantization is not supported yet in QCC segment');
+    } else if ((this.quantizationStyle & 0x1f) === 2) {
+      // Body (length - 2) is Rscc, Sq, then 1 + 3 * D two-byte steps
+      const steps = (this.getLength() - 4) / 2;
+      if ((this.getLength() - 4) % 2 !== 0 || steps < 1 || steps % 3 !== 1) {
+        throw new Error('Invalid length value in QCC segment');
+      }
+      this.decompositionLevels = (steps - 1) / 3;
+      for (let i = 0; i < steps; ++i) {
+        this.quantizationStepSize.push(binaryReader.readUint16());
+      }
+    } else {
+      throw new Error('Invalid quantization style value in QCC segment');
+    }
+  }
+
+  /**
+   * Gets the segment description.
+   * @method
+   * @returns {string} Segment description.
+   */
+  toString() {
+    return `${super.toString()} [Component: ${this.getComponent()}, Decomposition levels: ${this.getDecompositionLevels()}, Quantization style: 0x${this.getQuantizationStyle().toString(16)}]`;
   }
 }
 //#endregion
@@ -870,9 +976,9 @@ class TlmSegment extends Segment {
   }
 
   /**
-   * Gets Length of marker segment in bytes.
+   * Gets Length of marker segment in bytes (including the marker).
    * @method
-   * @returns {number} Length of marker segment in bytes (not including the marker).
+   * @returns {number} Length of marker segment in bytes (including the marker).
    */
   getLtlm() {
     return this.ltlm;
@@ -902,7 +1008,7 @@ class TlmSegment extends Segment {
    * be derived from the length of this marker segment or from a non-zero TNsot
    * parameter, if present.
    * @method
-   * @returns {number} Array of tile numbers for tile-parts, if more than one
+   * @returns {Array<number>} Array of tile numbers for tile-parts, if more than one
    * tile-part per tile.
    */
   getTtlm() {
@@ -1225,6 +1331,7 @@ module.exports = {
   ComSegment,
   NltSegment,
   PpmSegment,
+  QccSegment,
   QcdSegment,
   Segment,
   SizSegment,
